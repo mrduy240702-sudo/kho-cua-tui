@@ -34,7 +34,7 @@ jobs:
         uses: actions/upload-pages-artifact@v4
         with:
           path: .
-          name: github-pages
+          name: github-pages-${{ github.run_id }}
 
       - name: Allow artifact metadata to propagate
         run: sleep 12
