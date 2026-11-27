@@ -2,8 +2,10 @@
   'use strict';
 
   const DB_NAME = 'kho-cua-tui';
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const STORE = 'vaults';
+  const MEDIA_STORE = 'media';
+  const FILE_STORE = 'mediaFiles';
   const PALETTE = [
     ['#a88af8','rgba(168,138,248,.12)'],
     ['#70a9ed','rgba(112,169,237,.12)'],
@@ -45,6 +47,15 @@
           const store = db.createObjectStore(STORE, { keyPath: 'id' });
           store.createIndex('updatedAt', 'updatedAt');
         }
+        if (!db.objectStoreNames.contains(MEDIA_STORE)) {
+          const mediaStore = db.createObjectStore(MEDIA_STORE, { keyPath: 'id' });
+          mediaStore.createIndex('vaultId', 'vaultId');
+          mediaStore.createIndex('groupId', 'groupId');
+          mediaStore.createIndex('createdAt', 'createdAt');
+        }
+        if (!db.objectStoreNames.contains(FILE_STORE)) {
+          db.createObjectStore(FILE_STORE, { keyPath: 'id' });
+        }
       };
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error || new Error('Không thể mở kho dữ liệu.'));
@@ -70,6 +81,55 @@
       tx.onerror = () => reject(tx.error || new Error('Không thể lưu dữ liệu.'));
       tx.onabort = () => reject(tx.error || new Error('Lưu dữ liệu bị gián đoạn.'));
     });
+  }
+
+  async function readAllMedia() {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction(MEDIA_STORE, 'readonly').objectStore(MEDIA_STORE).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function readMediaForGroup(groupId) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction(MEDIA_STORE, 'readonly')
+        .objectStore(MEDIA_STORE).index('groupId').getAll(groupId);
+      request.onsuccess = () => resolve((request.result || []).sort((a, b) => b.createdAt - a.createdAt));
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function readMediaFile(id) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction(FILE_STORE, 'readonly').objectStore(FILE_STORE).get(id);
+      request.onsuccess = () => resolve(request.result ? request.result.blob : null);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function savePhotoRecord(record, originalBlob) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([MEDIA_STORE, FILE_STORE], 'readwrite');
+      tx.objectStore(MEDIA_STORE).put(record);
+      tx.objectStore(FILE_STORE).put({ id: record.id, blob: originalBlob });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Không thể lưu ảnh.'));
+      tx.onabort = () => reject(tx.error || new Error('Lưu ảnh bị gián đoạn.'));
+    });
+  }
+
+  async function getGroupPhotoCounts() {
+    const records = await readAllMedia();
+    const counts = new Map();
+    records.forEach(record => {
+      if (record.kind === 'photo') counts.set(record.groupId, (counts.get(record.groupId) || 0) + 1);
+    });
+    return counts;
   }
 
   function createElement(tag, className, text) {
@@ -106,10 +166,15 @@
     els.grid.append(fragment);
   }
 
-  function updateStats() {
-    document.getElementById('photoCount').textContent = '0';
-    document.getElementById('videoCount').textContent = '0';
-    document.getElementById('fileCount').textContent = '0';
+  async function updateStats() {
+    try {
+      const records = await readAllMedia();
+      document.getElementById('photoCount').textContent = String(records.filter(item => item.kind === 'photo').length);
+      document.getElementById('videoCount').textContent = String(records.filter(item => item.kind === 'video').length);
+      document.getElementById('fileCount').textContent = String(records.filter(item => item.kind === 'file').length);
+    } catch (error) {
+      console.warn('Không thể cập nhật thống kê:', error);
+    }
   }
 
   function showNotice(title, message) {
@@ -126,6 +191,7 @@
     document.querySelectorAll('.nav-item').forEach(button => {
       button.classList.toggle('active', button.dataset.tab === 'home');
     });
+    photoPageToken += 1;
     window.scrollTo(0, 0);
   }
 
@@ -166,7 +232,13 @@
         const meta = createElement('span', 'vault-meta', group.typeLabel + ' · Chưa có tệp');
         const arrow = createElement('span', 'vault-arrow', '↗');
         card.append(symbol, name, meta, arrow);
-        card.addEventListener('click', () => showNotice(group.typeLabel, 'Phần nhập và xem nội dung sẽ được xây dựng ở giai đoạn tiếp theo.'));
+        card.addEventListener('click', () => {
+          if (group.type === 'photos') {
+            renderPhotoGroup(activeVault.id, group.id);
+          } else {
+            showNotice(group.typeLabel, 'Phần này sẽ được triển khai ở giai đoạn tiếp theo.');
+          }
+        });
         fragment.append(card);
       });
       groupGrid.append(fragment);
@@ -186,6 +258,337 @@
     document.getElementById('groupDialog').showModal();
     window.setTimeout(() => document.getElementById('groupName').focus(), 80);
   }
+
+  let pageObjectUrls = [];
+  let viewerObjectUrl = null;
+  let viewerRecords = [];
+  let viewerIndex = 0;
+  let photoPageToken = 0;
+
+  function revokePageUrls() {
+    pageObjectUrls.forEach(url => URL.revokeObjectURL(url));
+    pageObjectUrls = [];
+  }
+
+  function makeObjectUrl(blob, collection) {
+    const url = URL.createObjectURL(blob);
+    if (collection) collection.push(url);
+    return url;
+  }
+
+  function isImageFile(file) {
+    if (file.type && file.type.toLowerCase().startsWith('image/')) return true;
+    return /\.(jpe?g|png|gif|webp|heic|heif|avif|bmp|tiff?|svg)$/i.test(file.name || '');
+  }
+
+  async function makeThumbnail(file) {
+    let source = null;
+    let bitmap = null;
+    let temporaryUrl = null;
+    try {
+      if (typeof createImageBitmap === 'function') {
+        try {
+          bitmap = await createImageBitmap(file);
+          source = bitmap;
+        } catch (_) {
+          source = null;
+        }
+      }
+      if (!source) {
+        temporaryUrl = URL.createObjectURL(file);
+        const image = new Image();
+        image.decoding = 'async';
+        image.src = temporaryUrl;
+        await new Promise((resolve, reject) => {
+          image.onload = resolve;
+          image.onerror = () => reject(new Error('Trình duyệt chưa đọc được ảnh này để tạo ảnh thu nhỏ.'));
+        });
+        source = image;
+      }
+
+      const width = source.width || source.naturalWidth;
+      const height = source.height || source.naturalHeight;
+      if (!width || !height) return null;
+      const maxEdge = 480;
+      const scale = Math.min(1, maxEdge / Math.max(width, height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(width * scale));
+      canvas.height = Math.max(1, Math.round(height * scale));
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) return null;
+      context.drawImage(source, 0, 0, canvas.width, canvas.height);
+      return await new Promise(resolve => {
+        canvas.toBlob(blob => resolve(blob || null), 'image/jpeg', 0.76);
+      });
+    } catch (_) {
+      return null;
+    } finally {
+      if (bitmap && typeof bitmap.close === 'function') bitmap.close();
+      if (temporaryUrl) URL.revokeObjectURL(temporaryUrl);
+    }
+  }
+
+  function formatBytes(bytes) {
+    if (!Number.isFinite(bytes) || bytes < 0) return '';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  function buildPhotoGrid(container, records, showContext) {
+    revokePageUrls();
+    container.replaceChildren();
+    const fragment = document.createDocumentFragment();
+    records.forEach((record, index) => {
+      const card = createElement('button', 'photo-card');
+      card.type = 'button';
+      card.setAttribute('aria-label', 'Mở ảnh ' + record.name);
+      if (record.thumbnail) {
+        const image = document.createElement('img');
+        image.alt = record.name || 'Ảnh đã lưu';
+        image.loading = 'lazy';
+        image.decoding = 'async';
+        image.src = makeObjectUrl(record.thumbnail, pageObjectUrls);
+        card.append(image);
+      } else {
+        const fallback = createElement('span', 'photo-fallback', '▧');
+        card.append(fallback);
+      }
+      const caption = createElement('span', 'photo-caption', record.name || 'Ảnh không tên');
+      card.append(caption);
+      if (showContext && record.contextLabel) {
+        card.append(createElement('span', 'photo-context', record.contextLabel));
+      }
+      card.addEventListener('click', () => openPhotoViewer(records, index));
+      fragment.append(card);
+    });
+    container.append(fragment);
+  }
+
+  function createPhotoGridElement() {
+    return createElement('div', 'photo-grid');
+  }
+
+  async function renderPhotoGroup(vaultId, groupId) {
+    const token = ++photoPageToken;
+    const vault = vaults.find(item => item.id === vaultId);
+    const group = vault && (vault.groups || []).find(item => item.id === groupId);
+    if (!vault || !group) return;
+    activeVault = vault;
+    els.main.hidden = true;
+    els.settings.hidden = true;
+    els.library.hidden = false;
+    els.library.replaceChildren();
+    revokePageUrls();
+
+    const back = createElement('button', 'page-back', '←  ' + vault.name);
+    back.addEventListener('click', () => openVault(vault.id));
+    const kicker = createElement('div', 'section-kicker', 'THƯ VIỆN ẢNH');
+    const title = createElement('h1', '', group.name);
+    const description = createElement('p', 'page-description', 'Ảnh gốc được giữ nguyên. Ảnh thu nhỏ chỉ dùng để hiển thị lưới nhanh hơn.');
+    const toolbar = createElement('div', 'photo-toolbar');
+    const countLabel = createElement('span', 'photo-total', 'Đang tải danh sách…');
+    const importButton = createElement('button', 'primary-button', '＋ Thêm ảnh');
+    importButton.type = 'button';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = true;
+    input.className = 'visually-hidden';
+    input.setAttribute('aria-label', 'Chọn ảnh từ thiết bị');
+    importButton.addEventListener('click', () => input.click());
+    const status = createElement('p', 'import-status', '');
+    const grid = createPhotoGridElement();
+    toolbar.append(countLabel, importButton);
+    els.library.append(back, kicker, title, description, toolbar, input, status, grid);
+    window.scrollTo(0, 0);
+
+    input.addEventListener('change', async () => {
+      const selected = Array.from(input.files || []).filter(isImageFile);
+      input.value = '';
+      if (!selected.length) {
+        showNotice('Chưa chọn được ảnh', 'Bạn hãy chọn một hoặc nhiều tệp hình ảnh nhé.');
+        return;
+      }
+      importButton.disabled = true;
+      let saved = 0;
+      let failed = 0;
+      for (let index = 0; index < selected.length; index += 1) {
+        const file = selected[index];
+        status.textContent = 'Đang lưu ảnh ' + (index + 1) + '/' + selected.length + '…';
+        try {
+          const thumbnail = await makeThumbnail(file);
+          const record = {
+            id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2),
+            vaultId,
+            groupId,
+            kind: 'photo',
+            name: file.name || ('Ảnh ' + (index + 1)),
+            mimeType: file.type || 'application/octet-stream',
+            size: file.size,
+            lastModified: file.lastModified || 0,
+            createdAt: Date.now(),
+            thumbnail
+          };
+          await savePhotoRecord(record, file);
+          saved += 1;
+        } catch (error) {
+          failed += 1;
+          console.error('Không thể lưu ảnh:', file.name, error);
+          if (error && (error.name === 'QuotaExceededError' || /quota|space/i.test(error.message || ''))) {
+            status.textContent = 'Bộ nhớ thiết bị không còn đủ dung lượng.';
+            showNotice('Không đủ dung lượng', 'iPhone không còn đủ bộ nhớ dành cho dữ liệu website. Một số ảnh có thể chưa được lưu. Hãy kiểm tra dung lượng Safari/iPhone rồi thử lại.');
+            break;
+          }
+        }
+      }
+      importButton.disabled = false;
+      status.textContent = saved + ' ảnh đã lưu' + (failed ? ' · ' + failed + ' ảnh chưa lưu được' : '');
+      await updateStats();
+      await renderPhotoGroup(vaultId, groupId);
+      if (failed && saved === 0) {
+        showNotice('Chưa lưu được ảnh', 'Hãy thử chọn ít ảnh hơn hoặc kiểm tra dung lượng lưu trữ của Safari.');
+      }
+    });
+
+    try {
+      const records = await readMediaForGroup(groupId);
+      if (token !== photoPageToken) return;
+      countLabel.textContent = records.length + (records.length === 1 ? ' ảnh' : ' ảnh');
+      if (!records.length) {
+        grid.replaceWith(createElement('div', 'category-empty photo-empty', 'Chưa có ảnh trong nhóm này.\nNhấn “Thêm ảnh” để chọn ảnh từ thư viện iPhone.'));
+      } else {
+        buildPhotoGrid(grid, records, false);
+      }
+    } catch (error) {
+      countLabel.textContent = 'Không tải được ảnh';
+      showNotice('Lỗi đọc thư viện', error.message || 'Không thể đọc dữ liệu ảnh đã lưu.');
+    }
+  }
+
+  async function renderAllPhotos() {
+    const token = ++photoPageToken;
+    activeVault = null;
+    els.main.hidden = true;
+    els.settings.hidden = true;
+    els.library.hidden = false;
+    els.library.replaceChildren();
+    revokePageUrls();
+    const kicker = createElement('div', 'section-kicker', 'TẤT CẢ NỘI DUNG');
+    const title = createElement('h1', '', 'Ảnh của bạn');
+    const description = createElement('p', 'page-description', 'Tập hợp ảnh đã lưu trong các không gian của bạn.');
+    const grid = createPhotoGridElement();
+    els.library.append(kicker, title, description, grid);
+    try {
+      const records = (await readAllMedia()).filter(item => item.kind === 'photo').sort((a, b) => b.createdAt - a.createdAt);
+      if (token !== photoPageToken) return;
+      const groupLookup = new Map();
+      vaults.forEach(vault => (vault.groups || []).forEach(group => {
+        groupLookup.set(group.id, vault.name + ' / ' + group.name);
+      }));
+      records.forEach(record => { record.contextLabel = groupLookup.get(record.groupId) || 'Không gian đã lưu'; });
+      if (!records.length) {
+        grid.replaceWith(createElement('div', 'category-empty photo-empty', 'Bạn chưa lưu ảnh nào.\nHãy vào một không gian, tạo nhóm Ảnh rồi thêm ảnh từ iPhone.'));
+      } else {
+        buildPhotoGrid(grid, records, true);
+      }
+    } catch (error) {
+      showNotice('Không tải được thư viện', error.message || 'Hãy thử tải lại ứng dụng.');
+    }
+  }
+
+  async function openPhotoViewer(records, index) {
+    viewerRecords = records;
+    viewerIndex = index;
+    await showPhotoAt(index);
+  }
+
+  async function showPhotoAt(index) {
+    if (index < 0 || index >= viewerRecords.length) return;
+    viewerIndex = index;
+    const record = viewerRecords[index];
+    const dialog = document.getElementById('photoViewerDialog');
+    const image = document.getElementById('viewerImage');
+    const title = document.getElementById('viewerTitle');
+    const counter = document.getElementById('viewerCounter');
+    const download = document.getElementById('viewerDownload');
+    const token = ++viewerLoadToken;
+    title.textContent = record.name || 'Ảnh';
+    counter.textContent = (index + 1) + ' / ' + viewerRecords.length;
+    document.getElementById('viewerPrev').disabled = index === 0;
+    document.getElementById('viewerNext').disabled = index === viewerRecords.length - 1;
+    image.classList.add('is-loading');
+    try {
+      const blob = await readMediaFile(record.id);
+      if (token !== viewerLoadToken) return;
+      if (!blob) throw new Error('Không tìm thấy tệp ảnh gốc trong bộ nhớ.');
+      const nextUrl = URL.createObjectURL(blob);
+      const previousUrl = viewerObjectUrl;
+      viewerObjectUrl = nextUrl;
+      image.onload = () => {
+        image.classList.remove('is-loading');
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
+      };
+      image.onerror = () => {
+        image.classList.remove('is-loading');
+        showNotice('Không mở được ảnh', 'Tệp gốc đã được lưu, nhưng trình duyệt trên thiết bị này chưa hỗ trợ hiển thị định dạng ảnh đó.');
+      };
+      image.src = nextUrl;
+      download.onclick = () => {
+        const link = document.createElement('a');
+        link.href = nextUrl;
+        link.download = record.name || 'anh';
+        link.rel = 'noopener';
+        document.body.append(link);
+        link.click();
+        link.remove();
+      };
+      if (!dialog.open) dialog.showModal();
+    } catch (error) {
+      showNotice('Không mở được ảnh', error.message || 'Không thể đọc tệp ảnh.');
+    }
+  }
+
+  let viewerLoadToken = 0;
+
+  function closePhotoViewer() {
+    viewerLoadToken += 1;
+    const dialog = document.getElementById('photoViewerDialog');
+    if (dialog.open) dialog.close();
+    const image = document.getElementById('viewerImage');
+    image.removeAttribute('src');
+    image.classList.remove('is-loading');
+    if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
+    viewerObjectUrl = null;
+  }
+
+  document.getElementById('viewerClose').addEventListener('click', closePhotoViewer);
+  document.getElementById('viewerPrev').addEventListener('click', () => showPhotoAt(viewerIndex - 1));
+  document.getElementById('viewerNext').addEventListener('click', () => showPhotoAt(viewerIndex + 1));
+  document.getElementById('photoViewerDialog').addEventListener('click', event => {
+    if (event.target.id === 'photoViewerDialog') closePhotoViewer();
+  });
+  document.getElementById('photoViewerDialog').addEventListener('close', () => {
+    const image = document.getElementById('viewerImage');
+    image.removeAttribute('src');
+    if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
+    viewerObjectUrl = null;
+  });
+
+  const viewerStage = document.getElementById('viewerStage');
+  let swipeStartX = 0;
+  let swipeStartY = 0;
+  viewerStage.addEventListener('pointerdown', event => {
+    swipeStartX = event.clientX;
+    swipeStartY = event.clientY;
+  });
+  viewerStage.addEventListener('pointerup', event => {
+    const deltaX = event.clientX - swipeStartX;
+    const deltaY = event.clientY - swipeStartY;
+    if (Math.abs(deltaX) > 48 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+      if (deltaX < 0) showPhotoAt(viewerIndex + 1);
+      else showPhotoAt(viewerIndex - 1);
+    }
+  });
 
   function openCreateDialog() {
     els.form.reset();
@@ -244,10 +647,16 @@
         showHome();
         return;
       }
-      if (tab === 'photos' || tab === 'videos' || tab === 'files') {
+      if (tab === 'photos') {
+        renderAllPhotos();
+        document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item === button));
+        return;
+      }
+      if (tab === 'videos' || tab === 'files') {
         showHome();
-        const labels = { photos: 'Ảnh', videos: 'Video', files: 'Tệp' };
-        showNotice(labels[tab], 'Khu vực này sẽ được triển khai sau khi hoàn thiện cấu trúc kho và nhóm lưu trữ.');
+        document.querySelectorAll('.nav-item').forEach(item => item.classList.toggle('active', item === button));
+        const labels = { videos: 'Video', files: 'Tệp' };
+        showNotice(labels[tab], 'Khu vực này sẽ được triển khai ở giai đoạn tiếp theo.');
       }
     });
   });
