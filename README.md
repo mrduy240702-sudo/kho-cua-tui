@@ -18,6 +18,8 @@
 - Hiển thị ảnh theo từng đợt tối đa 90 ảnh.
 - Xem ảnh toàn màn hình, chuyển ảnh bằng nút hoặc vuốt và tải ảnh xuống.
 - Phóng to/thu nhỏ bằng hai ngón tay, kéo ảnh khi đang phóng lớn và chạm hai lần để phóng nhanh hoặc trở về kích thước vừa màn hình.
+- Chạm một lần để ẩn/hiện thanh điều khiển khi xem ảnh; chuyển ảnh bằng hiệu ứng mờ và dịch nhẹ theo hướng chuyển.
+- Trường nhập liệu dùng cỡ chữ tối thiểu 16px để hạn chế Safari tự phóng to khi nhập.
 - Thống kê số ảnh đã lưu.
 
 ## Giới hạn cần biết
