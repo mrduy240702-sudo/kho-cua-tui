@@ -552,6 +552,7 @@
   async function showPhotoAt(index) {
     if (index < 0 || index >= viewerRecords.length) return;
     viewerIndex = index;
+    resetViewerZoom();
     const record = viewerRecords[index];
     const dialog = document.getElementById('photoViewerDialog');
     const image = document.getElementById('viewerImage');
@@ -607,6 +608,7 @@
     image.classList.remove('is-loading');
     if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
     viewerObjectUrl = null;
+    resetViewerZoom();
   }
 
   document.getElementById('viewerClose').addEventListener('click', closePhotoViewer);
@@ -626,20 +628,181 @@
   });
 
   const viewerStage = document.getElementById('viewerStage');
-  let swipeStartX = 0;
-  let swipeStartY = 0;
-  viewerStage.addEventListener('pointerdown', event => {
-    swipeStartX = event.clientX;
-    swipeStartY = event.clientY;
-  });
-  viewerStage.addEventListener('pointerup', event => {
-    const deltaX = event.clientX - swipeStartX;
-    const deltaY = event.clientY - swipeStartY;
-    if (Math.abs(deltaX) > 48 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
-      if (deltaX < 0) showPhotoAt(viewerIndex + 1);
-      else showPhotoAt(viewerIndex - 1);
+  const viewerImage = document.getElementById('viewerImage');
+  let viewerScale = 1;
+  let viewerPanX = 0;
+  let viewerPanY = 0;
+  let activePointers = new Map();
+  let viewerGesture = null;
+  let lastTap = null;
+
+  function applyViewerTransform() {
+    viewerImage.style.transform = 'translate3d(' + viewerPanX + 'px,' + viewerPanY + 'px,0) scale(' + viewerScale + ')';
+  }
+
+  function clampViewerPan() {
+    const maxX = Math.max(0, (viewerImage.offsetWidth * viewerScale - viewerStage.clientWidth) / 2);
+    const maxY = Math.max(0, (viewerImage.offsetHeight * viewerScale - viewerStage.clientHeight) / 2);
+    viewerPanX = Math.min(maxX, Math.max(-maxX, viewerPanX));
+    viewerPanY = Math.min(maxY, Math.max(-maxY, viewerPanY));
+    if (viewerScale <= 1.001) {
+      viewerScale = 1;
+      viewerPanX = 0;
+      viewerPanY = 0;
     }
-  });
+  }
+
+  function resetViewerZoom() {
+    viewerScale = 1;
+    viewerPanX = 0;
+    viewerPanY = 0;
+    activePointers.clear();
+    viewerGesture = null;
+    lastTap = null;
+    if (viewerImage) {
+      viewerImage.style.transform = 'translate3d(0,0,0) scale(1)';
+    }
+  }
+
+  function setViewerZoomAt(nextScale, clientX, clientY) {
+    const rect = viewerStage.getBoundingClientRect();
+    const centerX = rect.left + rect.width / 2;
+    const centerY = rect.top + rect.height / 2;
+    const pointX = clientX - centerX;
+    const pointY = clientY - centerY;
+    const anchorX = (pointX - viewerPanX) / viewerScale;
+    const anchorY = (pointY - viewerPanY) / viewerScale;
+    viewerScale = Math.min(5, Math.max(1, nextScale));
+    viewerPanX = pointX - anchorX * viewerScale;
+    viewerPanY = pointY - anchorY * viewerScale;
+    clampViewerPan();
+    applyViewerTransform();
+  }
+
+  function pointerDistance(a, b) {
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  }
+
+  function pointerMidpoint(a, b) {
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  viewerStage.addEventListener('pointerdown', event => {
+    if (event.target.closest('button') || !document.getElementById('photoViewerDialog').open) return;
+    event.preventDefault();
+    viewerStage.setPointerCapture?.(event.pointerId);
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (activePointers.size === 1) {
+      viewerGesture = {
+        type: viewerScale > 1.001 ? 'pan' : 'swipe',
+        startX: event.clientX,
+        startY: event.clientY,
+        startPanX: viewerPanX,
+        startPanY: viewerPanY,
+        moved: false,
+        multi: false
+      };
+      return;
+    }
+
+    if (activePointers.size === 2) {
+      if (viewerGesture) viewerGesture.multi = true;
+      const points = Array.from(activePointers.values());
+      const midpoint = pointerMidpoint(points[0], points[1]);
+      const rect = viewerStage.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      viewerGesture = {
+        type: 'pinch',
+        multi: true,
+        startDistance: Math.max(1, pointerDistance(points[0], points[1])),
+        startScale: viewerScale,
+        anchorX: (midpoint.x - centerX - viewerPanX) / viewerScale,
+        anchorY: (midpoint.y - centerY - viewerPanY) / viewerScale
+      };
+    }
+  }, { passive: false });
+
+  viewerStage.addEventListener('pointermove', event => {
+    if (!activePointers.has(event.pointerId)) return;
+    activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    if (activePointers.size >= 2 && viewerGesture?.type === 'pinch') {
+      const points = Array.from(activePointers.values()).slice(0, 2);
+      const midpoint = pointerMidpoint(points[0], points[1]);
+      const rect = viewerStage.getBoundingClientRect();
+      const centerX = rect.left + rect.width / 2;
+      const centerY = rect.top + rect.height / 2;
+      const scaleFactor = pointerDistance(points[0], points[1]) / viewerGesture.startDistance;
+      viewerScale = Math.min(5, Math.max(1, viewerGesture.startScale * scaleFactor));
+      viewerPanX = midpoint.x - centerX - viewerGesture.anchorX * viewerScale;
+      viewerPanY = midpoint.y - centerY - viewerGesture.anchorY * viewerScale;
+      clampViewerPan();
+      applyViewerTransform();
+      return;
+    }
+
+    if (activePointers.size === 1 && viewerGesture?.type === 'pan') {
+      const pointer = activePointers.get(event.pointerId);
+      viewerPanX = viewerGesture.startPanX + pointer.x - viewerGesture.startX;
+      viewerPanY = viewerGesture.startPanY + pointer.y - viewerGesture.startY;
+      clampViewerPan();
+      applyViewerTransform();
+    }
+  }, { passive: false });
+
+  function finishViewerPointer(event) {
+    if (!activePointers.has(event.pointerId)) return;
+    const pointer = activePointers.get(event.pointerId);
+    const beforeCount = activePointers.size;
+    const gesture = viewerGesture;
+    activePointers.delete(event.pointerId);
+
+    if (beforeCount === 1 && gesture && gesture.type === 'swipe' && !gesture.multi && viewerScale <= 1.001) {
+      const deltaX = pointer.x - gesture.startX;
+      const deltaY = pointer.y - gesture.startY;
+      if (Math.abs(deltaX) > 48 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+        lastTap = null;
+        if (deltaX < 0) showPhotoAt(viewerIndex + 1);
+        else showPhotoAt(viewerIndex - 1);
+        viewerGesture = null;
+        return;
+      }
+
+      const moved = Math.hypot(deltaX, deltaY);
+      const now = Date.now();
+      if (moved < 12) {
+        if (lastTap && now - lastTap.time < 320 && Math.hypot(pointer.x - lastTap.x, pointer.y - lastTap.y) < 34) {
+          if (viewerScale > 1.001) {
+            resetViewerZoom();
+          } else {
+            setViewerZoomAt(2.5, pointer.x, pointer.y);
+          }
+          lastTap = null;
+        } else {
+          lastTap = { time: now, x: pointer.x, y: pointer.y };
+        }
+      } else {
+        lastTap = null;
+      }
+    } else if (beforeCount === 2 && activePointers.size === 1) {
+      const remaining = Array.from(activePointers.values())[0];
+      viewerGesture = {
+        type: viewerScale > 1.001 ? 'pan' : 'swipe',
+        startX: remaining.x,
+        startY: remaining.y,
+        startPanX: viewerPanX,
+        startPanY: viewerPanY,
+        multi: true
+      };
+    } else if (activePointers.size === 0) {
+      viewerGesture = null;
+    }
+  }
+
+  viewerStage.addEventListener('pointerup', finishViewerPointer);
+  viewerStage.addEventListener('pointercancel', finishViewerPointer);
 
   function openCreateDialog() {
     els.form.reset();
