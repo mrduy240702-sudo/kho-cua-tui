@@ -2,6 +2,8 @@
   'use strict';
 
   const DB_NAME = 'kho-cua-tui';
+  const APP_VERSION = '0.3.0';
+  const APP_RELEASE_DATE = '27/11/2026';
   const DB_VERSION = 2;
   const STORE = 'vaults';
   const MEDIA_STORE = 'media';
@@ -92,12 +94,34 @@
     });
   }
 
+
+  function sortMediaRecords(records, mode) {
+    const copy = [...records];
+    switch (mode) {
+      case 'oldest':
+        return copy.sort((a, b) => a.createdAt - b.createdAt);
+      case 'name-asc':
+        return copy.sort((a, b) => (a.name || '').localeCompare(b.name || '', 'vi', { sensitivity: 'base' }));
+      case 'name-desc':
+        return copy.sort((a, b) => (b.name || '').localeCompare(a.name || '', 'vi', { sensitivity: 'base' }));
+      case 'manual':
+        return copy.sort((a, b) => {
+          const left = Number.isFinite(a.orderIndex) ? a.orderIndex : a.createdAt;
+          const right = Number.isFinite(b.orderIndex) ? b.orderIndex : b.createdAt;
+          return left - right;
+        });
+      case 'newest':
+      default:
+        return copy.sort((a, b) => b.createdAt - a.createdAt);
+    }
+  }
+
   async function readMediaForGroup(groupId) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const request = db.transaction(MEDIA_STORE, 'readonly')
         .objectStore(MEDIA_STORE).index('groupId').getAll(groupId);
-      request.onsuccess = () => resolve((request.result || []).sort((a, b) => b.createdAt - a.createdAt));
+      request.onsuccess = () => resolve(request.result || []);
       request.onerror = () => reject(request.error);
     });
   }
@@ -421,6 +445,25 @@
     const description = createElement('p', 'page-description', 'Ảnh gốc được giữ nguyên. Ảnh thu nhỏ chỉ dùng để hiển thị lưới nhanh hơn.');
     const toolbar = createElement('div', 'photo-toolbar');
     const countLabel = createElement('span', 'photo-total', 'Đang tải danh sách…');
+    const sortWrap = createElement('label', 'photo-sort-wrap');
+    sortWrap.setAttribute('aria-label', 'Sắp xếp ảnh');
+    const sortLabel = createElement('span', '', 'Sắp xếp');
+    const sortSelect = document.createElement('select');
+    sortSelect.className = 'photo-sort-select';
+    sortSelect.setAttribute('aria-label', 'Thứ tự ảnh');
+    [
+      ['newest', 'Mới nhất'],
+      ['oldest', 'Cũ nhất'],
+      ['name-asc', 'Tên A–Z'],
+      ['name-desc', 'Tên Z–A']
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      sortSelect.append(option);
+    });
+    sortSelect.value = group.photoSortMode || 'newest';
+    sortWrap.append(sortLabel, sortSelect);
     const importButton = createElement('button', 'primary-button', '＋ Thêm ảnh');
     importButton.type = 'button';
     const input = document.createElement('input');
@@ -432,9 +475,27 @@
     importButton.addEventListener('click', () => input.click());
     const status = createElement('p', 'import-status', '');
     const grid = createPhotoGridElement();
-    toolbar.append(countLabel, importButton);
+    toolbar.append(countLabel, sortWrap, importButton);
     els.library.append(back, kicker, title, description, toolbar, input, status, grid);
     window.scrollTo(0, 0);
+
+    sortSelect.addEventListener('change', async () => {
+      group.photoSortMode = sortSelect.value;
+      activeVault.updatedAt = Date.now();
+      try {
+        await saveVault(activeVault);
+        const records = await readMediaForGroup(groupId);
+        const ordered = sortMediaRecords(records, group.photoSortMode);
+        countLabel.textContent = ordered.length + ' ảnh';
+        if (!ordered.length) {
+          grid.replaceWith(createElement('div', 'category-empty photo-empty', 'Chưa có ảnh trong nhóm này.'));
+        } else {
+          buildPhotoGrid(grid, ordered, false);
+        }
+      } catch (error) {
+        showNotice('Chưa lưu được cách sắp xếp', error.message || 'Hãy thử lại.');
+      }
+    });
 
     input.addEventListener('change', async () => {
       const picked = Array.from(input.files || []);
@@ -498,9 +559,10 @@
     });
 
     try {
-      const records = await readMediaForGroup(groupId);
+      const rawRecords = await readMediaForGroup(groupId);
       if (token !== photoPageToken) return;
-      countLabel.textContent = records.length + (records.length === 1 ? ' ảnh' : ' ảnh');
+      const records = sortMediaRecords(rawRecords, group.photoSortMode || 'newest');
+      countLabel.textContent = records.length + ' ảnh';
       if (!records.length) {
         grid.replaceWith(createElement('div', 'category-empty photo-empty', 'Chưa có ảnh trong nhóm này.\nNhấn “Thêm ảnh” để chọn ảnh từ thư viện iPhone.'));
       } else {
@@ -1030,9 +1092,76 @@
     }
   });
 
-  document.getElementById('settingsButton').addEventListener('click', () => {
-    showNotice('Cài đặt', 'Các tùy chọn giao diện, sao lưu và bảo mật sẽ được thêm ở giai đoạn quản lý dữ liệu.');
-  });
+
+  async function calculateAppStorageBytes() {
+    const [allVaults, allMedia] = await Promise.all([readAll(), readAllMedia()]);
+    let bytes = 0;
+    allVaults.forEach(vault => {
+      bytes += new Blob([JSON.stringify(vault)]).size;
+    });
+    allMedia.forEach(record => {
+      bytes += Number(record.size) || 0;
+      bytes += Number(record.thumbnail && record.thumbnail.size) || 0;
+      bytes += 256;
+    });
+    return bytes;
+  }
+
+  function formatStorageQuota(bytes) {
+    if (!Number.isFinite(bytes) || bytes <= 0) return 'Chưa xác định';
+    if (bytes >= 1024 ** 3) return (bytes / (1024 ** 3)).toFixed(2) + ' GB';
+    if (bytes >= 1024 ** 2) return (bytes / (1024 ** 2)).toFixed(1) + ' MB';
+    return formatBytes(bytes);
+  }
+
+  async function refreshStorageInfo() {
+    const usedLabel = document.getElementById('appStorageUsed');
+    const originLabel = document.getElementById('originStorageUsed');
+    const quotaLabel = document.getElementById('originStorageQuota');
+    const bar = document.getElementById('storageProgress');
+    const note = document.getElementById('storageNote');
+    if (!usedLabel || !originLabel || !quotaLabel || !bar || !note) return;
+
+    usedLabel.textContent = 'Đang tính…';
+    originLabel.textContent = 'Đang kiểm tra…';
+    quotaLabel.textContent = 'Đang kiểm tra…';
+    bar.style.width = '0%';
+
+    try {
+      const appBytes = await calculateAppStorageBytes();
+      usedLabel.textContent = formatStorageQuota(appBytes);
+
+      if (navigator.storage && typeof navigator.storage.estimate === 'function') {
+        const estimate = await navigator.storage.estimate();
+        const used = Number(estimate.usage) || 0;
+        const quota = Number(estimate.quota) || 0;
+        originLabel.textContent = formatStorageQuota(used);
+        quotaLabel.textContent = formatStorageQuota(quota);
+        const percent = quota > 0 ? Math.min(100, (used / quota) * 100) : 0;
+        bar.style.width = percent.toFixed(1) + '%';
+        note.textContent = 'Dung lượng trình duyệt là ước tính cho toàn bộ dữ liệu của website trên cùng địa chỉ, không chỉ riêng Kho của tui. Số liệu có thể thay đổi theo iOS.';
+      } else {
+        originLabel.textContent = 'Không hỗ trợ đo';
+        quotaLabel.textContent = 'Không xác định';
+        note.textContent = 'Safari chưa cung cấp API đo dung lượng trong phiên này. Dung lượng Kho của tui ở trên được ước tính từ các ảnh và dữ liệu đã lưu.';
+      }
+    } catch (error) {
+      usedLabel.textContent = 'Không đọc được';
+      originLabel.textContent = 'Không đọc được';
+      quotaLabel.textContent = 'Không xác định';
+      note.textContent = 'Không thể đọc thông tin lưu trữ lúc này. Hãy thử tải lại ứng dụng.';
+    }
+  }
+
+  async function openSettingsDialog() {
+    document.getElementById('appVersionLabel').textContent = 'v' + APP_VERSION;
+    document.getElementById('appReleaseDate').textContent = APP_RELEASE_DATE;
+    document.getElementById('settingsDialog').showModal();
+    await refreshStorageInfo();
+  }
+
+  document.getElementById('settingsButton').addEventListener('click', openSettingsDialog);
+  document.getElementById('refreshStorageButton').addEventListener('click', refreshStorageInfo);
 
   async function init() {
     try {
