@@ -293,6 +293,7 @@
 
   let pageObjectUrls = [];
   let viewerObjectUrl = null;
+  let viewerIncomingObjectUrl = null;
   let viewerRecords = [];
   let viewerIndex = 0;
   let photoPageToken = 0;
@@ -616,46 +617,32 @@
 
     const dialog = document.getElementById('photoViewerDialog');
     const image = document.getElementById('viewerImage');
+    const incomingImage = document.getElementById('viewerImageIncoming');
     const previousIndex = viewerIndex;
     const isChangingPhoto = dialog.open && previousIndex !== index;
-    const direction = index > previousIndex ? 1 : -1;
+    const token = ++viewerLoadToken;
 
     viewerIndex = index;
     resetViewerZoom();
     setViewerChrome(true);
 
+    if (viewerIncomingObjectUrl) {
+      URL.revokeObjectURL(viewerIncomingObjectUrl);
+      viewerIncomingObjectUrl = null;
+    }
+    incomingImage.onload = null;
+    incomingImage.onerror = null;
+    incomingImage.removeAttribute('src');
+    incomingImage.classList.remove('is-visible');
+
     const record = viewerRecords[index];
     const title = document.getElementById('viewerTitle');
     const counter = document.getElementById('viewerCounter');
     const download = document.getElementById('viewerDownload');
-    const token = ++viewerLoadToken;
-    const canAnimatePhoto = typeof image.animate === 'function' &&
-      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (typeof image.getAnimations === 'function') {
-      image.getAnimations().forEach(animation => animation.cancel());
-    }
-
     title.textContent = record.name || 'Ảnh';
     counter.textContent = (index + 1) + ' / ' + viewerRecords.length;
     document.getElementById('viewerPrev').disabled = index === 0;
     document.getElementById('viewerNext').disabled = index === viewerRecords.length - 1;
-
-    if (isChangingPhoto && canAnimatePhoto) {
-      const exitAnimation = image.animate([
-        { opacity: 1, transform: 'translate3d(0,0,0) scale(1)', filter: 'blur(0px)' },
-        { opacity: 0, transform: 'translate3d(' + (direction > 0 ? '-20px' : '20px') + ',0,0) scale(.99)', filter: 'blur(2px)' }
-      ], {
-        duration: 155,
-        easing: 'cubic-bezier(.4,0,1,1)',
-        fill: 'forwards'
-      });
-      try { await exitAnimation.finished; } catch (_) {}
-      if (token !== viewerLoadToken) return;
-      image.style.opacity = '0';
-      exitAnimation.cancel();
-    } else {
-      image.classList.add('is-loading');
-    }
 
     try {
       const blob = await readMediaFile(record.id);
@@ -664,39 +651,74 @@
 
       const nextUrl = URL.createObjectURL(blob);
       const previousUrl = viewerObjectUrl;
-      viewerObjectUrl = nextUrl;
 
-      image.onload = () => {
-        if (token !== viewerLoadToken) {
+      if (isChangingPhoto && image.getAttribute('src')) {
+        viewerIncomingObjectUrl = nextUrl;
+        incomingImage.classList.remove('is-visible');
+        incomingImage.onload = () => {
+          if (token !== viewerLoadToken) {
+            URL.revokeObjectURL(nextUrl);
+            return;
+          }
+
+          // Keep the previous photo visible underneath while the next photo fades in.
+          requestAnimationFrame(() => incomingImage.classList.add('is-visible'));
+          let promoted = false;
+          const promoteIncomingPhoto = () => {
+            if (promoted || token !== viewerLoadToken) return;
+            promoted = true;
+            image.onload = () => {
+              if (token !== viewerLoadToken) return;
+              image.classList.remove('is-loading');
+              incomingImage.classList.remove('is-visible');
+              incomingImage.removeAttribute('src');
+              viewerObjectUrl = nextUrl;
+              viewerIncomingObjectUrl = null;
+              if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
+            };
+            image.onerror = () => {
+              if (token !== viewerLoadToken) return;
+              // The incoming layer remains visible if the primary layer cannot be promoted.
+              image.classList.remove('is-loading');
+              incomingImage.classList.add('is-visible');
+              showNotice('Không thể hoàn tất chuyển ảnh', 'Ảnh mới vẫn đang hiển thị. Bạn có thể đóng và mở lại ảnh nếu cần.');
+            };
+            image.src = nextUrl;
+          };
+          incomingImage.addEventListener('transitionend', event => {
+            if (event.propertyName === 'opacity') promoteIncomingPhoto();
+          }, { once: true });
+          window.setTimeout(promoteIncomingPhoto, 360);
+        };
+        incomingImage.onerror = () => {
+          if (token !== viewerLoadToken) return;
           URL.revokeObjectURL(nextUrl);
-          return;
-        }
-        image.classList.remove('is-loading');
-        image.style.opacity = '';
-        if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
+          viewerIncomingObjectUrl = null;
+          showNotice('Không mở được ảnh', 'Trình duyệt chưa thể giải mã ảnh này.');
+        };
+        incomingImage.src = nextUrl;
+      } else {
+        viewerObjectUrl = nextUrl;
+        image.classList.add('is-loading');
+        image.onload = () => {
+          if (token !== viewerLoadToken) {
+            URL.revokeObjectURL(nextUrl);
+            return;
+          }
+          image.classList.remove('is-loading');
+          if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
+        };
+        image.onerror = () => {
+          if (token !== viewerLoadToken) return;
+          image.classList.remove('is-loading');
+          if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
+          URL.revokeObjectURL(nextUrl);
+          if (viewerObjectUrl === nextUrl) viewerObjectUrl = null;
+          showNotice('Không mở được ảnh', 'Tệp gốc đã được lưu, nhưng trình duyệt trên thiết bị này chưa hỗ trợ hiển thị định dạng ảnh đó.');
+        };
+        image.src = nextUrl;
+      }
 
-        if (isChangingPhoto && canAnimatePhoto) {
-          image.animate([
-            { opacity: 0, transform: 'translate3d(' + (direction > 0 ? '20px' : '-20px') + ',0,0) scale(.99)', filter: 'blur(2px)' },
-            { opacity: 1, transform: 'translate3d(0,0,0) scale(1)', filter: 'blur(0px)' }
-          ], {
-            duration: 235,
-            easing: 'cubic-bezier(.18,.72,.2,1)'
-          });
-        }
-      };
-
-      image.onerror = () => {
-        if (token !== viewerLoadToken) return;
-        image.classList.remove('is-loading');
-        image.style.opacity = '';
-        if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
-        URL.revokeObjectURL(nextUrl);
-        if (viewerObjectUrl === nextUrl) viewerObjectUrl = null;
-        showNotice('Không mở được ảnh', 'Tệp gốc đã được lưu, nhưng trình duyệt trên thiết bị này chưa hỗ trợ hiển thị định dạng ảnh đó.');
-      };
-
-      image.src = nextUrl;
       download.onclick = () => {
         const link = document.createElement('a');
         link.href = nextUrl;
@@ -709,8 +731,6 @@
       if (!dialog.open) dialog.showModal();
     } catch (error) {
       if (token !== viewerLoadToken) return;
-      image.classList.remove('is-loading');
-      image.style.opacity = '';
       showNotice('Không mở được ảnh', error.message || 'Không thể đọc tệp ảnh.');
     }
   }
@@ -727,7 +747,11 @@
     image.removeAttribute('src');
     image.classList.remove('is-loading');
     if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
+    if (viewerIncomingObjectUrl) URL.revokeObjectURL(viewerIncomingObjectUrl);
     viewerObjectUrl = null;
+    viewerIncomingObjectUrl = null;
+    document.getElementById('viewerImageIncoming').removeAttribute('src');
+    document.getElementById('viewerImageIncoming').classList.remove('is-visible');
     resetViewerZoom();
   }
 
@@ -745,7 +769,12 @@
     image.removeAttribute('src');
     image.classList.remove('is-loading');
     if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
+    if (viewerIncomingObjectUrl) URL.revokeObjectURL(viewerIncomingObjectUrl);
     viewerObjectUrl = null;
+    viewerIncomingObjectUrl = null;
+    const incomingImage = document.getElementById('viewerImageIncoming');
+    incomingImage.removeAttribute('src');
+    incomingImage.classList.remove('is-visible');
     viewerRecords = [];
   });
 
