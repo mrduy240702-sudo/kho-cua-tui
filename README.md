@@ -9,6 +9,8 @@
 - Progressive Web App (PWA) với Service Worker.
 - Không cần máy chủ ứng dụng để chạy các chức năng lưu trữ cơ bản.
 
+## Phiên bản hiện tại: 0.4.0 (27/11/2026)
+
 ## Đã triển khai
 
 - Tạo không gian lưu trữ và các nhóm độc lập.
@@ -20,7 +22,10 @@
 - Phóng to/thu nhỏ bằng hai ngón tay, kéo ảnh khi đang phóng lớn và chạm hai lần để phóng nhanh hoặc trở về kích thước vừa màn hình.
 - Chạm một lần để ẩn/hiện thanh điều khiển khi xem ảnh; chuyển ảnh bằng hiệu ứng mờ và dịch nhẹ theo hướng chuyển.
 - Trường nhập liệu dùng cỡ chữ tối thiểu 16px để hạn chế Safari tự phóng to khi nhập.
-- Thống kê số ảnh đã lưu.
+- Thống kê số ảnh và tệp đã lưu.
+- Sắp xếp ảnh và tệp theo ngày mới/cũ, tên A–Z/Z–A hoặc thứ tự thủ công.
+- Bảng thông tin ứng dụng hiển thị phiên bản và ước tính dung lượng dữ liệu.
+- Trình xem ảnh chuyển cảnh bằng crossfade hai lớp để tránh lóe sáng khi tải ảnh kế tiếp.
 
 ## Giới hạn cần biết
 
