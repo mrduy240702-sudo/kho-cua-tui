@@ -112,6 +112,25 @@
     </form>
   </dialog>
 
+  <dialog id="photoViewerDialog" class="photo-viewer" aria-label="Trình xem ảnh">
+    <div class="viewer-shell">
+      <header class="viewer-header">
+        <button type="button" class="viewer-icon-button" id="viewerClose" aria-label="Đóng trình xem">×</button>
+        <div class="viewer-heading"><strong id="viewerTitle">Ảnh</strong><span id="viewerCounter">1 / 1</span></div>
+        <button type="button" class="viewer-icon-button" id="viewerDownload" aria-label="Tải ảnh xuống" title="Tải ảnh xuống">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-5-5 5 5 5-5M5 19h14"/></svg>
+        </button>
+      </header>
+      <div class="viewer-stage" id="viewerStage">
+        <button type="button" class="viewer-arrow viewer-arrow-left" id="viewerPrev" aria-label="Ảnh trước">‹</button>
+        <img id="viewerImage" alt="Ảnh đang xem" draggable="false">
+        <button type="button" class="viewer-arrow viewer-arrow-right" id="viewerNext" aria-label="Ảnh tiếp theo">›</button>
+        <div class="viewer-loading" aria-hidden="true"><span></span></div>
+      </div>
+      <footer class="viewer-footer"><span>Vuốt sang trái hoặc phải để chuyển ảnh</span></footer>
+    </div>
+  </dialog>
+
   <dialog id="noticeDialog" class="app-dialog">
     <form method="dialog" class="dialog-card notice-card"><div class="notice-icon">✦</div><h2 id="noticeTitle">Thông báo</h2><p id="noticeText"></p><button class="primary-button full-button">Đã hiểu</button></form>
   </dialog>
