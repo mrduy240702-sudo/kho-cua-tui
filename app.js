@@ -433,10 +433,12 @@
     window.scrollTo(0, 0);
 
     input.addEventListener('change', async () => {
-      const selected = Array.from(input.files || []).filter(isImageFile);
+      const picked = Array.from(input.files || []);
       input.value = '';
+      if (!picked.length) return;
+      const selected = picked.filter(isImageFile);
       if (!selected.length) {
-        showNotice('Chưa chọn được ảnh', 'Bạn hãy chọn một hoặc nhiều tệp hình ảnh nhé.');
+        showNotice('Định dạng chưa phù hợp', 'Hãy chọn tệp hình ảnh như JPG, PNG, HEIC hoặc WebP.');
         return;
       }
       importButton.disabled = true;
@@ -571,6 +573,7 @@
       };
       image.onerror = () => {
         image.classList.remove('is-loading');
+        if (previousUrl) URL.revokeObjectURL(previousUrl);
         showNotice('Không mở được ảnh', 'Tệp gốc đã được lưu, nhưng trình duyệt trên thiết bị này chưa hỗ trợ hiển thị định dạng ảnh đó.');
       };
       image.src = nextUrl;
