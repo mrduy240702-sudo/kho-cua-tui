@@ -1,0 +1,21 @@
+{
+  "id": "./",
+  "name": "Kho của tui",
+  "short_name": "Kho của tui",
+  "description": "Không gian lưu trữ cá nhân",
+  "lang": "vi",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0c10",
+  "theme_color": "#0b0c10",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "./assets/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
