@@ -72,9 +72,6 @@
 
     <nav class="bottom-nav" aria-label="Điều hướng chính">
       <button class="nav-item active" data-tab="home"><svg viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg><span>Trang chủ</span></button>
-      <button class="nav-item" data-tab="photos"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="4"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg><span>Ảnh</span></button>
-      <button class="nav-item" data-tab="videos"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="4"/><path d="m10 9 5 3-5 3z"/></svg><span>Video</span></button>
-      <button class="nav-item" data-tab="files"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg><span>Tệp</span></button>
     </nav>
   </div>
 
@@ -124,11 +121,41 @@
       <div class="viewer-stage" id="viewerStage">
         <button type="button" class="viewer-arrow viewer-arrow-left" id="viewerPrev" aria-label="Ảnh trước">‹</button>
         <img id="viewerImage" alt="Ảnh đang xem" draggable="false">
+        <img id="viewerImageIncoming" class="viewer-image-incoming" alt="" aria-hidden="true" draggable="false">
         <button type="button" class="viewer-arrow viewer-arrow-right" id="viewerNext" aria-label="Ảnh tiếp theo">›</button>
         <div class="viewer-loading" aria-hidden="true"><span></span></div>
       </div>
       
     </div>
+  </dialog>
+
+  <dialog id="settingsDialog" class="app-dialog">
+    <form method="dialog" class="dialog-card settings-card">
+      <div class="dialog-top">
+        <div><span class="section-kicker">THÔNG TIN ỨNG DỤNG</span><h2>Cài đặt</h2></div>
+        <button class="icon-button close-button" value="cancel" aria-label="Đóng">×</button>
+      </div>
+
+      <section class="settings-section">
+        <div class="settings-row"><span>Phiên bản</span><strong id="appVersionLabel">v0.4.0</strong></div>
+        <div class="settings-row"><span>Cập nhật ngày</span><strong id="appReleaseDate">27/11/2026</strong></div>
+      </section>
+
+      <section class="settings-section storage-section">
+        <div class="settings-section-title">Dung lượng lưu trữ</div>
+        <div class="settings-storage-card">
+          <span class="storage-label">Dữ liệu trong Kho của tui</span>
+          <strong class="storage-value" id="appStorageUsed">Đang tính…</strong>
+        </div>
+        <div class="settings-row"><span>Website đang sử dụng</span><strong id="originStorageUsed">Đang kiểm tra…</strong></div>
+        <div class="settings-row"><span>Giới hạn trình duyệt báo cáo</span><strong id="originStorageQuota">Đang kiểm tra…</strong></div>
+        <div class="storage-track"><span id="storageProgress"></span></div>
+        <p class="storage-note" id="storageNote">Dung lượng có thể thay đổi theo trình duyệt và phiên bản iOS.</p>
+        <button type="button" class="secondary-button" id="refreshStorageButton">↻  Cập nhật dung lượng</button>
+      </section>
+      <p class="settings-disclaimer">Số liệu dung lượng Kho của tui là ước tính từ các tệp đã lưu. Số liệu website là tổng của toàn bộ dữ liệu cùng địa chỉ web, không chỉ riêng ứng dụng này.</p>
+      <button class="primary-button full-button">Đóng</button>
+    </form>
   </dialog>
 
   <dialog id="noticeDialog" class="app-dialog">
