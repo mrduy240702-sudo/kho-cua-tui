@@ -337,31 +337,57 @@
   function buildPhotoGrid(container, records, showContext) {
     revokePageUrls();
     container.replaceChildren();
-    const fragment = document.createDocumentFragment();
-    records.forEach((record, index) => {
-      const card = createElement('button', 'photo-card');
-      card.type = 'button';
-      card.setAttribute('aria-label', 'Mở ảnh ' + record.name);
-      if (record.thumbnail) {
-        const image = document.createElement('img');
-        image.alt = record.name || 'Ảnh đã lưu';
-        image.loading = 'lazy';
-        image.decoding = 'async';
-        image.src = makeObjectUrl(record.thumbnail, pageObjectUrls);
-        card.append(image);
-      } else {
-        const fallback = createElement('span', 'photo-fallback', '▧');
-        card.append(fallback);
+    const pageSize = 90;
+    let cursor = 0;
+    let moreButton = null;
+
+    const appendBatch = () => {
+      if (moreButton) {
+        moreButton.remove();
+        moreButton = null;
       }
-      const caption = createElement('span', 'photo-caption', record.name || 'Ảnh không tên');
-      card.append(caption);
-      if (showContext && record.contextLabel) {
-        card.append(createElement('span', 'photo-context', record.contextLabel));
+      const fragment = document.createDocumentFragment();
+      const limit = Math.min(cursor + pageSize, records.length);
+      for (let index = cursor; index < limit; index += 1) {
+        const record = records[index];
+        const card = createElement('button', 'photo-card');
+        card.type = 'button';
+        card.setAttribute('aria-label', 'Mở ảnh ' + record.name);
+        if (record.thumbnail) {
+          const image = document.createElement('img');
+          image.alt = record.name || 'Ảnh đã lưu';
+          image.loading = 'lazy';
+          image.decoding = 'async';
+          image.src = makeObjectUrl(record.thumbnail, pageObjectUrls);
+          image.addEventListener('load', () => image.classList.add('is-ready'), { once: true });
+          image.addEventListener('error', () => {
+            image.remove();
+            card.append(createElement('span', 'photo-fallback', '▧'));
+          }, { once: true });
+          card.append(image);
+        } else {
+          card.append(createElement('span', 'photo-fallback', '▧'));
+        }
+        const caption = createElement('span', 'photo-caption', record.name || 'Ảnh không tên');
+        card.append(caption);
+        if (showContext && record.contextLabel) {
+          card.append(createElement('span', 'photo-context', record.contextLabel));
+        }
+        card.addEventListener('click', () => openPhotoViewer(records, index));
+        fragment.append(card);
       }
-      card.addEventListener('click', () => openPhotoViewer(records, index));
-      fragment.append(card);
-    });
-    container.append(fragment);
+      container.append(fragment);
+      cursor = limit;
+
+      if (cursor < records.length) {
+        moreButton = createElement('button', 'photo-load-more', 'Tải thêm ảnh · ' + (records.length - cursor) + ' còn lại');
+        moreButton.type = 'button';
+        moreButton.addEventListener('click', appendBatch, { once: true });
+        container.after(moreButton);
+      }
+    };
+
+    appendBatch();
   }
 
   function createPhotoGridElement() {
@@ -568,8 +594,10 @@
     if (event.target.id === 'photoViewerDialog') closePhotoViewer();
   });
   document.getElementById('photoViewerDialog').addEventListener('close', () => {
+    viewerLoadToken += 1;
     const image = document.getElementById('viewerImage');
     image.removeAttribute('src');
+    image.classList.remove('is-loading');
     if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
     viewerObjectUrl = null;
   });
