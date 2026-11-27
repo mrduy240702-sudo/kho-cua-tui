@@ -805,6 +805,7 @@
 
   viewerStage.addEventListener('pointerup', finishViewerPointer);
   viewerStage.addEventListener('pointercancel', finishViewerPointer);
+  viewerStage.addEventListener('lostpointercapture', finishViewerPointer);
 
   function openCreateDialog() {
     els.form.reset();
