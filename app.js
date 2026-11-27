@@ -28,6 +28,7 @@
   let dbPromise;
   let vaults = [];
   let selectedEmoji = '✦';
+  let selectedGroupType = 'photos';
   let activeVault = null;
 
   function openDB() {
@@ -140,10 +141,50 @@
     back.addEventListener('click', showHome);
     const kicker = createElement('div', 'section-kicker', 'KHÔNG GIAN CỦA BẠN');
     const title = createElement('h1', '', activeVault.name);
-    const description = createElement('p', 'page-description', 'Đây là nơi sắp xếp nội dung trong không gian này.');
-    const empty = createElement('div', 'category-empty', 'Không gian này chưa có nhóm nào.\nPhần tạo nhóm và nhập nội dung sẽ được bổ sung ở bước tiếp theo.');
-    els.library.append(back, kicker, title, description, empty);
+    const description = createElement('p', 'page-description', 'Các nhóm trong không gian này được lưu riêng biệt.');
+    const heading = createElement('div', 'library-heading');
+    const headingLabel = createElement('h2', '', 'Nhóm lưu trữ');
+    const addGroup = createElement('button', 'text-button', '＋ Tạo nhóm');
+    addGroup.type = 'button';
+    addGroup.addEventListener('click', openGroupDialog);
+    heading.append(headingLabel, addGroup);
+
+    const groupGrid = createElement('div', 'vault-grid');
+    const groups = Array.isArray(activeVault.groups) ? activeVault.groups : [];
+    if (groups.length === 0) {
+      const empty = createElement('div', 'category-empty', 'Chưa có nhóm nào trong không gian này.\nTạo nhóm Ảnh, Video, Tài liệu hoặc Khác để bắt đầu sắp xếp.');
+      els.library.append(back, kicker, title, description, heading, empty);
+    } else {
+      const fragment = document.createDocumentFragment();
+      groups.forEach((group, index) => {
+        const card = createElement('button', 'vault-card group-card');
+        card.type = 'button';
+        card.style.setProperty('--glow', PALETTE[index % PALETTE.length][1]);
+        card.style.setProperty('--symbol-bg', PALETTE[index % PALETTE.length][1]);
+        const symbol = createElement('span', 'vault-symbol', group.emoji);
+        const name = createElement('span', 'vault-name', group.name);
+        const meta = createElement('span', 'vault-meta', group.typeLabel + ' · Chưa có tệp');
+        const arrow = createElement('span', 'vault-arrow', '↗');
+        card.append(symbol, name, meta, arrow);
+        card.addEventListener('click', () => showNotice(group.typeLabel, 'Phần nhập và xem nội dung sẽ được xây dựng ở giai đoạn tiếp theo.'));
+        fragment.append(card);
+      });
+      groupGrid.append(fragment);
+      els.library.append(back, kicker, title, description, heading, groupGrid);
+    }
     window.scrollTo(0, 0);
+  }
+
+  function openGroupDialog() {
+    if (!activeVault) return;
+    const form = document.getElementById('groupForm');
+    form.reset();
+    selectedGroupType = 'photos';
+    document.querySelectorAll('.group-type').forEach(button => {
+      button.classList.toggle('selected', button.dataset.type === selectedGroupType);
+    });
+    document.getElementById('groupDialog').showModal();
+    window.setTimeout(() => document.getElementById('groupName').focus(), 80);
   }
 
   function openCreateDialog() {
@@ -209,6 +250,57 @@
         showNotice(labels[tab], 'Khu vực này sẽ được triển khai sau khi hoàn thiện cấu trúc kho và nhóm lưu trữ.');
       }
     });
+  });
+
+  document.getElementById('groupTypeOptions').addEventListener('click', event => {
+    const button = event.target.closest('.group-type');
+    if (!button) return;
+    selectedGroupType = button.dataset.type;
+    document.querySelectorAll('.group-type').forEach(option => {
+      option.classList.toggle('selected', option === button);
+    });
+  });
+
+  document.getElementById('groupForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    if (!activeVault) return;
+    const name = document.getElementById('groupName').value.trim();
+    if (!name) {
+      document.getElementById('groupName').focus();
+      return;
+    }
+    const groups = Array.isArray(activeVault.groups) ? activeVault.groups : [];
+    if (groups.some(group => group.name.toLocaleLowerCase('vi') === name.toLocaleLowerCase('vi'))) {
+      showNotice('Tên nhóm đã tồn tại', 'Trong không gian này đã có một nhóm cùng tên.');
+      return;
+    }
+    const types = {
+      photos: { label: 'Ảnh', emoji: '▧' },
+      videos: { label: 'Video', emoji: '▶' },
+      documents: { label: 'Tài liệu', emoji: '▤' },
+      other: { label: 'Khác', emoji: '✧' }
+    };
+    const type = types[selectedGroupType] || types.photos;
+    const group = {
+      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2),
+      name,
+      type: selectedGroupType,
+      typeLabel: type.label,
+      emoji: type.emoji,
+      createdAt: Date.now()
+    };
+    activeVault.groups = [...groups, group];
+    activeVault.updatedAt = Date.now();
+    try {
+      await saveVault(activeVault);
+      const index = vaults.findIndex(vault => vault.id === activeVault.id);
+      if (index >= 0) vaults[index] = activeVault;
+      document.getElementById('groupDialog').close();
+      openVault(activeVault.id);
+      renderVaults();
+    } catch (error) {
+      showNotice('Chưa thể lưu nhóm', error.message || 'Hãy thử lại sau.');
+    }
   });
 
   document.getElementById('settingsButton').addEventListener('click', () => {
