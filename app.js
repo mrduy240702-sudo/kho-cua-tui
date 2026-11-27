@@ -125,7 +125,7 @@
     document.querySelectorAll('.nav-item').forEach(button => {
       button.classList.toggle('active', button.dataset.tab === 'home');
     });
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    window.scrollTo(0, 0);
   }
 
   function openVault(id) {
