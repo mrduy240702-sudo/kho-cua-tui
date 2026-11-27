@@ -127,7 +127,7 @@
   }
 
 
-  async function persistPhotoOrder(records) {
+  async function persistMediaOrder(records) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
       const tx = db.transaction(MEDIA_STORE, 'readwrite');
@@ -568,7 +568,7 @@
       const moved = [...currentRecords];
       [moved[index], moved[target]] = [moved[target], moved[index]];
       try {
-        await persistPhotoOrder(moved);
+        await persistMediaOrder(moved);
         group.photoSortMode = 'manual';
         sortSelect.value = 'manual';
         vault.updatedAt = Date.now();
@@ -583,7 +583,7 @@
       const mode = sortSelect.value;
       try {
         if (mode === 'manual') {
-          await persistPhotoOrder(currentRecords);
+          await persistMediaOrder(currentRecords);
           group.photoSortMode = 'manual';
           await saveVault(vault);
           paintPhotoGrid(currentRecords);
@@ -787,7 +787,7 @@
       const moved = [...currentRecords];
       [moved[index], moved[target]] = [moved[target], moved[index]];
       try {
-        await persistPhotoOrder(moved);
+        await persistMediaOrder(moved);
         group.fileSortMode = 'manual';
         sortSelect.value = 'manual';
         await saveVault(vault);
@@ -801,7 +801,7 @@
       const mode = sortSelect.value;
       try {
         if (mode === 'manual') {
-          await persistPhotoOrder(currentRecords);
+          await persistMediaOrder(currentRecords);
           group.fileSortMode = 'manual';
           await saveVault(vault);
           paintList(currentRecords);
