@@ -638,6 +638,7 @@
 
   function applyViewerTransform() {
     viewerImage.style.transform = 'translate3d(' + viewerPanX + 'px,' + viewerPanY + 'px,0) scale(' + viewerScale + ')';
+    viewerStage.classList.toggle('is-zoomed', viewerScale > 1.001);
   }
 
   function clampViewerPan() {
@@ -661,6 +662,7 @@
     lastTap = null;
     if (viewerImage) {
       viewerImage.style.transform = 'translate3d(0,0,0) scale(1)';
+      viewerStage.classList.remove('is-zoomed');
     }
   }
 
