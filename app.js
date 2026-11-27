@@ -143,7 +143,7 @@
     const description = createElement('p', 'page-description', 'Đây là nơi sắp xếp nội dung trong không gian này.');
     const empty = createElement('div', 'category-empty', 'Không gian này chưa có nhóm nào.\nPhần tạo nhóm và nhập nội dung sẽ được bổ sung ở bước tiếp theo.');
     els.library.append(back, kicker, title, description, empty);
-    window.scrollTo({ top: 0, behavior: 'instant' });
+    window.scrollTo(0, 0);
   }
 
   function openCreateDialog() {
