@@ -2,7 +2,7 @@
   'use strict';
 
   const DB_NAME = 'kho-cua-tui';
-  const APP_VERSION = '0.3.0';
+  const APP_VERSION = '0.4.0';
   const APP_RELEASE_DATE = '27/11/2026';
   const DB_VERSION = 2;
   const STORE = 'vaults';
@@ -245,7 +245,6 @@
     document.querySelectorAll('.nav-item').forEach(button => {
       button.classList.toggle('active', button.dataset.tab === 'home');
     });
-    photoPageToken += 1;
     window.scrollTo(0, 0);
   }
 
@@ -928,7 +927,15 @@
     setViewerChrome(true);
 
     if (viewerIncomingObjectUrl) {
-      URL.revokeObjectURL(viewerIncomingObjectUrl);
+      if (image.src === viewerIncomingObjectUrl) {
+        // The incoming layer was already promoted to the main image; keep its URL alive.
+        if (viewerObjectUrl && viewerObjectUrl !== viewerIncomingObjectUrl) {
+          URL.revokeObjectURL(viewerObjectUrl);
+        }
+        viewerObjectUrl = viewerIncomingObjectUrl;
+      } else {
+        URL.revokeObjectURL(viewerIncomingObjectUrl);
+      }
       viewerIncomingObjectUrl = null;
     }
     incomingImage.onload = null;
