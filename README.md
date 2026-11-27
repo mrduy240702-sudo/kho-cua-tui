@@ -17,6 +17,7 @@
 - Tạo thumbnail JPEG riêng để hiển thị lưới nhẹ hơn.
 - Hiển thị ảnh theo từng đợt tối đa 90 ảnh.
 - Xem ảnh toàn màn hình, chuyển ảnh bằng nút hoặc vuốt và tải ảnh xuống.
+- Phóng to/thu nhỏ bằng hai ngón tay, kéo ảnh khi đang phóng lớn và chạm hai lần để phóng nhanh hoặc trở về kích thước vừa màn hình.
 - Thống kê số ảnh đã lưu.
 
 ## Giới hạn cần biết
