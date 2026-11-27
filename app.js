@@ -126,6 +126,22 @@
     });
   }
 
+
+  async function persistPhotoOrder(records) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MEDIA_STORE, 'readwrite');
+      const store = tx.objectStore(MEDIA_STORE);
+      records.forEach((record, index) => {
+        record.orderIndex = index;
+        store.put(record);
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Không thể lưu thứ tự ảnh.'));
+      tx.onabort = () => reject(tx.error || new Error('Lưu thứ tự ảnh bị gián đoạn.'));
+    });
+  }
+
   async function readMediaFile(id) {
     const db = await openDB();
     return new Promise((resolve, reject) => {
@@ -367,7 +383,7 @@
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   }
 
-  function buildPhotoGrid(container, records, showContext) {
+  function buildPhotoGrid(container, records, showContext, manualOrder, onMove) {
     revokePageUrls();
     container.replaceChildren();
     const pageSize = 90;
@@ -383,9 +399,11 @@
       const limit = Math.min(cursor + pageSize, records.length);
       for (let index = cursor; index < limit; index += 1) {
         const record = records[index];
-        const card = createElement('button', 'photo-card');
-        card.type = 'button';
+        const card = createElement('div', 'photo-card');
+        card.tabIndex = 0;
+        card.setAttribute('role', 'button');
         card.setAttribute('aria-label', 'Mở ảnh ' + record.name);
+
         if (record.thumbnail) {
           const image = document.createElement('img');
           image.alt = record.name || 'Ảnh đã lưu';
@@ -401,12 +419,48 @@
         } else {
           card.append(createElement('span', 'photo-fallback', '▧'));
         }
+
         const caption = createElement('span', 'photo-caption', record.name || 'Ảnh không tên');
         card.append(caption);
         if (showContext && record.contextLabel) {
           card.append(createElement('span', 'photo-context', record.contextLabel));
         }
-        card.addEventListener('click', () => openPhotoViewer(records, index));
+
+        if (manualOrder && typeof onMove === 'function') {
+          const controls = createElement('span', 'photo-order-controls');
+          const moveUp = createElement('button', 'photo-order-button', '‹');
+          moveUp.type = 'button';
+          moveUp.title = 'Chuyển ảnh sang trái';
+          moveUp.setAttribute('aria-label', 'Chuyển ảnh sang trái');
+          moveUp.disabled = index === 0;
+          moveUp.addEventListener('click', event => {
+            event.stopPropagation();
+            onMove(index, -1);
+          });
+          const moveDown = createElement('button', 'photo-order-button', '›');
+          moveDown.type = 'button';
+          moveDown.title = 'Chuyển ảnh sang phải';
+          moveDown.setAttribute('aria-label', 'Chuyển ảnh sang phải');
+          moveDown.disabled = index === records.length - 1;
+          moveDown.addEventListener('click', event => {
+            event.stopPropagation();
+            onMove(index, 1);
+          });
+          controls.append(moveUp, moveDown);
+          card.append(controls);
+        }
+
+        card.addEventListener('click', event => {
+          if (event.target.closest('.photo-order-button')) return;
+          openPhotoViewer(records, index);
+        });
+        card.addEventListener('keydown', event => {
+          if (event.target !== card) return;
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            openPhotoViewer(records, index);
+          }
+        });
         fragment.append(card);
       }
       container.append(fragment);
