@@ -1,4 +1,4 @@
-const CACHE_NAME = 'kho-cua-tui-shell-v5';
+const CACHE_NAME = 'kho-cua-tui-shell-v6';
 const APP_SHELL = [
   './',
   './index.html',
