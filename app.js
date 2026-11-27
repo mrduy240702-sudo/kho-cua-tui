@@ -551,11 +551,16 @@
 
   async function showPhotoAt(index) {
     if (index < 0 || index >= viewerRecords.length) return;
-    viewerIndex = index;
-    resetViewerZoom();
-    const record = viewerRecords[index];
     const dialog = document.getElementById('photoViewerDialog');
     const image = document.getElementById('viewerImage');
+    const previousIndex = viewerIndex;
+    const isChangingPhoto = dialog.open && previousIndex !== index;
+    const direction = index > previousIndex ? 1 : -1;
+    viewerIndex = index;
+    resetViewerZoom();
+    setViewerChrome(true);
+
+    const record = viewerRecords[index];
     const title = document.getElementById('viewerTitle');
     const counter = document.getElementById('viewerCounter');
     const download = document.getElementById('viewerDownload');
@@ -564,20 +569,43 @@
     counter.textContent = (index + 1) + ' / ' + viewerRecords.length;
     document.getElementById('viewerPrev').disabled = index === 0;
     document.getElementById('viewerNext').disabled = index === viewerRecords.length - 1;
-    image.classList.add('is-loading');
+
+    if (isChangingPhoto) {
+      image.style.setProperty('--viewer-out-x', (direction > 0 ? '-18px' : '18px'));
+      image.style.setProperty('--viewer-in-x', (direction > 0 ? '18px' : '-18px'));
+      image.classList.remove('is-transition-in');
+      image.classList.add('is-transition-out');
+      await new Promise(resolve => window.setTimeout(resolve, 105));
+      if (token !== viewerLoadToken) return;
+    } else {
+      image.classList.add('is-loading');
+    }
+
     try {
       const blob = await readMediaFile(record.id);
       if (token !== viewerLoadToken) return;
       if (!blob) throw new Error('Không tìm thấy tệp ảnh gốc trong bộ nhớ.');
+
       const nextUrl = URL.createObjectURL(blob);
       const previousUrl = viewerObjectUrl;
       viewerObjectUrl = nextUrl;
       image.onload = () => {
-        image.classList.remove('is-loading');
+        if (token !== viewerLoadToken) {
+          URL.revokeObjectURL(nextUrl);
+          return;
+        }
+        image.classList.remove('is-loading', 'is-transition-out');
+        image.classList.add('is-transition-in');
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => {
+            if (token === viewerLoadToken) image.classList.remove('is-transition-in');
+          });
+        });
         if (previousUrl) URL.revokeObjectURL(previousUrl);
       };
       image.onerror = () => {
-        image.classList.remove('is-loading');
+        if (token !== viewerLoadToken) return;
+        image.classList.remove('is-loading', 'is-transition-out', 'is-transition-in');
         if (previousUrl) URL.revokeObjectURL(previousUrl);
         showNotice('Không mở được ảnh', 'Tệp gốc đã được lưu, nhưng trình duyệt trên thiết bị này chưa hỗ trợ hiển thị định dạng ảnh đó.');
       };
@@ -593,6 +621,8 @@
       };
       if (!dialog.open) dialog.showModal();
     } catch (error) {
+      if (token !== viewerLoadToken) return;
+      image.classList.remove('is-loading', 'is-transition-out', 'is-transition-in');
       showNotice('Không mở được ảnh', error.message || 'Không thể đọc tệp ảnh.');
     }
   }
@@ -601,6 +631,8 @@
 
   function closePhotoViewer() {
     viewerLoadToken += 1;
+    clearChromeTapTimer();
+    setViewerChrome(true);
     const dialog = document.getElementById('photoViewerDialog');
     if (dialog.open) dialog.close();
     const image = document.getElementById('viewerImage');
@@ -619,6 +651,8 @@
   });
   document.getElementById('photoViewerDialog').addEventListener('close', () => {
     viewerLoadToken += 1;
+    clearChromeTapTimer();
+    setViewerChrome(true);
     const image = document.getElementById('viewerImage');
     image.removeAttribute('src');
     image.classList.remove('is-loading');
@@ -629,6 +663,37 @@
 
   const viewerStage = document.getElementById('viewerStage');
   const viewerImage = document.getElementById('viewerImage');
+  const viewerHeader = document.querySelector('.viewer-header');
+  const viewerPrevButton = document.getElementById('viewerPrev');
+  const viewerNextButton = document.getElementById('viewerNext');
+  let viewerChromeVisible = true;
+  let chromeTapTimer = null;
+
+  function clearChromeTapTimer() {
+    if (chromeTapTimer !== null) {
+      window.clearTimeout(chromeTapTimer);
+      chromeTapTimer = null;
+    }
+  }
+
+  function setViewerChrome(visible) {
+    viewerChromeVisible = Boolean(visible);
+    viewerHeader.classList.toggle('is-hidden', !viewerChromeVisible);
+    viewerStage.classList.toggle('chrome-hidden', !viewerChromeVisible);
+    viewerHeader.setAttribute('aria-hidden', String(!viewerChromeVisible));
+    viewerPrevButton.setAttribute('aria-hidden', String(!viewerChromeVisible));
+    viewerNextButton.setAttribute('aria-hidden', String(!viewerChromeVisible));
+  }
+
+  function scheduleChromeToggle() {
+    clearChromeTapTimer();
+    chromeTapTimer = window.setTimeout(() => {
+      setViewerChrome(!viewerChromeVisible);
+      chromeTapTimer = null;
+      lastTap = null;
+    }, 330);
+  }
+
   let viewerScale = 1;
   let viewerPanX = 0;
   let viewerPanY = 0;
@@ -765,6 +830,7 @@
       const deltaX = pointer.x - gesture.startX;
       const deltaY = pointer.y - gesture.startY;
       if (Math.abs(deltaX) > 48 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+        clearChromeTapTimer();
         lastTap = null;
         if (deltaX < 0) showPhotoAt(viewerIndex + 1);
         else showPhotoAt(viewerIndex - 1);
@@ -776,16 +842,20 @@
       const now = Date.now();
       if (moved < 12) {
         if (lastTap && now - lastTap.time < 320 && Math.hypot(pointer.x - lastTap.x, pointer.y - lastTap.y) < 34) {
+          clearChromeTapTimer();
           if (viewerScale > 1.001) {
             resetViewerZoom();
           } else {
             setViewerZoomAt(2.5, pointer.x, pointer.y);
           }
+          setViewerChrome(true);
           lastTap = null;
         } else {
           lastTap = { time: now, x: pointer.x, y: pointer.y };
+          scheduleChromeToggle();
         }
       } else {
+        clearChromeTapTimer();
         lastTap = null;
       }
     } else if (beforeCount === 2 && activePointers.size === 1) {
