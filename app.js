@@ -551,11 +551,13 @@
 
   async function showPhotoAt(index) {
     if (index < 0 || index >= viewerRecords.length) return;
+
     const dialog = document.getElementById('photoViewerDialog');
     const image = document.getElementById('viewerImage');
     const previousIndex = viewerIndex;
     const isChangingPhoto = dialog.open && previousIndex !== index;
     const direction = index > previousIndex ? 1 : -1;
+
     viewerIndex = index;
     resetViewerZoom();
     setViewerChrome(true);
@@ -565,18 +567,25 @@
     const counter = document.getElementById('viewerCounter');
     const download = document.getElementById('viewerDownload');
     const token = ++viewerLoadToken;
+
     title.textContent = record.name || 'Ảnh';
     counter.textContent = (index + 1) + ' / ' + viewerRecords.length;
     document.getElementById('viewerPrev').disabled = index === 0;
     document.getElementById('viewerNext').disabled = index === viewerRecords.length - 1;
 
-    if (isChangingPhoto) {
-      image.style.setProperty('--viewer-out-x', (direction > 0 ? '-18px' : '18px'));
-      image.style.setProperty('--viewer-in-x', (direction > 0 ? '18px' : '-18px'));
-      image.classList.remove('is-transition-in');
-      image.classList.add('is-transition-out');
-      await new Promise(resolve => window.setTimeout(resolve, 105));
+    if (isChangingPhoto && typeof image.animate === 'function') {
+      const exitAnimation = image.animate([
+        { opacity: 1, transform: 'translate3d(0,0,0) scale(1)', filter: 'blur(0px)' },
+        { opacity: 0, transform: 'translate3d(' + (direction > 0 ? '-20px' : '20px') + ',0,0) scale(.99)', filter: 'blur(2px)' }
+      ], {
+        duration: 115,
+        easing: 'ease-in',
+        fill: 'forwards'
+      });
+      try { await exitAnimation.finished; } catch (_) {}
       if (token !== viewerLoadToken) return;
+      image.style.opacity = '0';
+      exitAnimation.cancel();
     } else {
       image.classList.add('is-loading');
     }
@@ -589,26 +598,36 @@
       const nextUrl = URL.createObjectURL(blob);
       const previousUrl = viewerObjectUrl;
       viewerObjectUrl = nextUrl;
+
       image.onload = () => {
         if (token !== viewerLoadToken) {
           URL.revokeObjectURL(nextUrl);
           return;
         }
-        image.classList.remove('is-loading', 'is-transition-out');
-        image.classList.add('is-transition-in');
-        window.requestAnimationFrame(() => {
-          window.requestAnimationFrame(() => {
-            if (token === viewerLoadToken) image.classList.remove('is-transition-in');
+        image.classList.remove('is-loading');
+        image.style.opacity = '';
+        if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
+
+        if (isChangingPhoto && typeof image.animate === 'function') {
+          image.animate([
+            { opacity: 0, transform: 'translate3d(' + (direction > 0 ? '20px' : '-20px') + ',0,0) scale(.99)', filter: 'blur(2px)' },
+            { opacity: 1, transform: 'translate3d(0,0,0) scale(1)', filter: 'blur(0px)' }
+          ], {
+            duration: 190,
+            easing: 'cubic-bezier(.2,.72,.24,1)',
+            fill: 'both'
           });
-        });
-        if (previousUrl) URL.revokeObjectURL(previousUrl);
+        }
       };
+
       image.onerror = () => {
         if (token !== viewerLoadToken) return;
-        image.classList.remove('is-loading', 'is-transition-out', 'is-transition-in');
-        if (previousUrl) URL.revokeObjectURL(previousUrl);
+        image.classList.remove('is-loading');
+        image.style.opacity = '';
+        if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
         showNotice('Không mở được ảnh', 'Tệp gốc đã được lưu, nhưng trình duyệt trên thiết bị này chưa hỗ trợ hiển thị định dạng ảnh đó.');
       };
+
       image.src = nextUrl;
       download.onclick = () => {
         const link = document.createElement('a');
@@ -622,7 +641,8 @@
       if (!dialog.open) dialog.showModal();
     } catch (error) {
       if (token !== viewerLoadToken) return;
-      image.classList.remove('is-loading', 'is-transition-out', 'is-transition-in');
+      image.classList.remove('is-loading');
+      image.style.opacity = '';
       showNotice('Không mở được ảnh', error.message || 'Không thể đọc tệp ảnh.');
     }
   }
@@ -826,10 +846,13 @@
     const gesture = viewerGesture;
     activePointers.delete(event.pointerId);
 
-    if (beforeCount === 1 && gesture && gesture.type === 'swipe' && !gesture.multi && viewerScale <= 1.001) {
+    if (beforeCount === 1 && gesture && !gesture.multi) {
       const deltaX = pointer.x - gesture.startX;
       const deltaY = pointer.y - gesture.startY;
-      if (Math.abs(deltaX) > 48 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
+      const moved = Math.hypot(deltaX, deltaY);
+
+      if (gesture.type === 'swipe' && viewerScale <= 1.001 &&
+          Math.abs(deltaX) > 48 && Math.abs(deltaX) > Math.abs(deltaY) * 1.25) {
         clearChromeTapTimer();
         lastTap = null;
         if (deltaX < 0) showPhotoAt(viewerIndex + 1);
@@ -838,10 +861,10 @@
         return;
       }
 
-      const moved = Math.hypot(deltaX, deltaY);
-      const now = Date.now();
       if (moved < 12) {
-        if (lastTap && now - lastTap.time < 320 && Math.hypot(pointer.x - lastTap.x, pointer.y - lastTap.y) < 34) {
+        const now = Date.now();
+        if (lastTap && now - lastTap.time < 320 &&
+            Math.hypot(pointer.x - lastTap.x, pointer.y - lastTap.y) < 34) {
           clearChromeTapTimer();
           if (viewerScale > 1.001) {
             resetViewerZoom();
@@ -859,6 +882,8 @@
         lastTap = null;
       }
     } else if (beforeCount === 2 && activePointers.size === 1) {
+      clearChromeTapTimer();
+      lastTap = null;
       const remaining = Array.from(activePointers.values())[0];
       viewerGesture = {
         type: viewerScale > 1.001 ? 'pan' : 'swipe',
