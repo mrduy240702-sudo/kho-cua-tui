@@ -184,6 +184,8 @@
   }
 
   function showHome() {
+    photoPageToken += 1;
+    revokePageUrls();
     activeVault = null;
     els.main.hidden = false;
     els.library.hidden = true;
@@ -196,6 +198,8 @@
   }
 
   function openVault(id) {
+    photoPageToken += 1;
+    revokePageUrls();
     activeVault = vaults.find(vault => vault.id === id);
     if (!activeVault) return;
     els.main.hidden = true;
@@ -618,6 +622,7 @@
     image.classList.remove('is-loading');
     if (viewerObjectUrl) URL.revokeObjectURL(viewerObjectUrl);
     viewerObjectUrl = null;
+    viewerRecords = [];
   });
 
   const viewerStage = document.getElementById('viewerStage');
