@@ -163,6 +163,18 @@
     });
   }
 
+  async function saveFileRecord(record, originalBlob) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([MEDIA_STORE, FILE_STORE], 'readwrite');
+      tx.objectStore(MEDIA_STORE).put(record);
+      tx.objectStore(FILE_STORE).put({ id: record.id, blob: originalBlob });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error('Không thể lưu tệp.'));
+      tx.onabort = () => reject(tx.error || new Error('Lưu tệp bị gián đoạn.'));
+    });
+  }
+
   async function getGroupPhotoCounts() {
     const records = await readAllMedia();
     const counts = new Map();
@@ -274,17 +286,22 @@
         const symbol = createElement('span', 'vault-symbol', group.emoji);
         const name = createElement('span', 'vault-name', group.name);
         const groupCount = Number(group.photoCount || 0);
+        const fileCount = Number(group.fileCount || 0);
         const metaText = group.type === 'photos'
           ? group.typeLabel + ' · ' + groupCount + ' ảnh'
-          : group.typeLabel + ' · Chưa có tệp';
+          : (group.type === 'documents' || group.type === 'other')
+            ? group.typeLabel + ' · ' + fileCount + ' tệp'
+            : group.typeLabel + ' · Chưa có video';
         const meta = createElement('span', 'vault-meta', metaText);
         const arrow = createElement('span', 'vault-arrow', '↗');
         card.append(symbol, name, meta, arrow);
         card.addEventListener('click', () => {
           if (group.type === 'photos') {
             renderPhotoGroup(activeVault.id, group.id);
+          } else if (group.type === 'documents' || group.type === 'other') {
+            renderFileGroup(activeVault.id, group.id);
           } else {
-            showNotice(group.typeLabel, 'Phần này sẽ được triển khai ở giai đoạn tiếp theo.');
+            showNotice(group.typeLabel, 'Trình quản lý video sẽ được triển khai ở giai đoạn tiếp theo.');
           }
         });
         fragment.append(card);
@@ -510,7 +527,8 @@
       ['newest', 'Mới nhất'],
       ['oldest', 'Cũ nhất'],
       ['name-asc', 'Tên A–Z'],
-      ['name-desc', 'Tên Z–A']
+      ['name-desc', 'Tên Z–A'],
+      ['manual', 'Tự sắp xếp']
     ].forEach(([value, label]) => {
       const option = document.createElement('option');
       option.value = value;
@@ -534,18 +552,46 @@
     els.library.append(back, kicker, title, description, toolbar, input, status, grid);
     window.scrollTo(0, 0);
 
-    sortSelect.addEventListener('change', async () => {
-      group.photoSortMode = sortSelect.value;
-      activeVault.updatedAt = Date.now();
+    let currentRecords = [];
+
+    const paintPhotoGrid = records => {
+      currentRecords = records;
+      if (!records.length) {
+        grid.replaceChildren(createElement('div', 'category-empty photo-empty', 'Chưa có ảnh trong nhóm này.\nNhấn “Thêm ảnh” để chọn ảnh từ thư viện iPhone.'));
+        return;
+      }
+      buildPhotoGrid(grid, records, false, sortSelect.value === 'manual', movePhoto);
+    };
+
+    async function movePhoto(index, delta) {
+      const target = index + delta;
+      if (target < 0 || target >= currentRecords.length) return;
+      const moved = [...currentRecords];
+      [moved[index], moved[target]] = [moved[target], moved[index]];
       try {
-        await saveVault(activeVault);
-        const records = await readMediaForGroup(groupId);
-        const ordered = sortMediaRecords(records, group.photoSortMode);
-        countLabel.textContent = ordered.length + ' ảnh';
-        if (!ordered.length) {
-          grid.replaceWith(createElement('div', 'category-empty photo-empty', 'Chưa có ảnh trong nhóm này.'));
+        await persistPhotoOrder(moved);
+        group.photoSortMode = 'manual';
+        sortSelect.value = 'manual';
+        vault.updatedAt = Date.now();
+        await saveVault(vault);
+        paintPhotoGrid(moved);
+      } catch (error) {
+        showNotice('Không lưu được thứ tự ảnh', error.message || 'Hãy thử lại.');
+      }
+    }
+
+    sortSelect.addEventListener('change', async () => {
+      const mode = sortSelect.value;
+      try {
+        if (mode === 'manual') {
+          await persistPhotoOrder(currentRecords);
+          group.photoSortMode = 'manual';
+          await saveVault(vault);
+          paintPhotoGrid(currentRecords);
         } else {
-          buildPhotoGrid(grid, ordered, false);
+          group.photoSortMode = mode;
+          await saveVault(vault);
+          paintPhotoGrid(sortMediaRecords(currentRecords, mode));
         }
       } catch (error) {
         showNotice('Chưa lưu được cách sắp xếp', error.message || 'Hãy thử lại.');
@@ -616,16 +662,217 @@
     try {
       const rawRecords = await readMediaForGroup(groupId);
       if (token !== photoPageToken) return;
-      const records = sortMediaRecords(rawRecords, group.photoSortMode || 'newest');
+      const records = sortMediaRecords(rawRecords.filter(item => item.kind === 'photo'), group.photoSortMode || 'newest');
       countLabel.textContent = records.length + ' ảnh';
-      if (!records.length) {
-        grid.replaceWith(createElement('div', 'category-empty photo-empty', 'Chưa có ảnh trong nhóm này.\nNhấn “Thêm ảnh” để chọn ảnh từ thư viện iPhone.'));
-      } else {
-        buildPhotoGrid(grid, records, false);
-      }
+      paintPhotoGrid(records);
     } catch (error) {
       countLabel.textContent = 'Không tải được ảnh';
       showNotice('Lỗi đọc thư viện', error.message || 'Không thể đọc dữ liệu ảnh đã lưu.');
+    }
+  }
+
+
+  async function renderFileGroup(vaultId, groupId) {
+    const token = ++photoPageToken;
+    const vault = vaults.find(item => item.id === vaultId);
+    const group = vault && (vault.groups || []).find(item => item.id === groupId);
+    if (!vault || !group) return;
+
+    activeVault = vault;
+    els.main.hidden = true;
+    els.settings.hidden = true;
+    els.library.hidden = false;
+    els.library.replaceChildren();
+    revokePageUrls();
+
+    const back = createElement('button', 'page-back', '←  ' + vault.name);
+    back.addEventListener('click', () => openVault(vault.id));
+    const kicker = createElement('div', 'section-kicker', 'THƯ VIỆN TỆP');
+    const title = createElement('h1', '', group.name);
+    const description = createElement('p', 'page-description', 'Tệp gốc được lưu nguyên vẹn trong bộ nhớ cục bộ của ứng dụng.');
+    const toolbar = createElement('div', 'photo-toolbar');
+    const countLabel = createElement('span', 'photo-total', 'Đang tải danh sách…');
+    const sortWrap = createElement('label', 'photo-sort-wrap');
+    sortWrap.setAttribute('aria-label', 'Sắp xếp tệp');
+    sortWrap.append(createElement('span', '', 'Sắp xếp'));
+    const sortSelect = document.createElement('select');
+    sortSelect.className = 'photo-sort-select';
+    sortSelect.setAttribute('aria-label', 'Thứ tự tệp');
+    [
+      ['newest', 'Mới nhất'],
+      ['oldest', 'Cũ nhất'],
+      ['name-asc', 'Tên A–Z'],
+      ['name-desc', 'Tên Z–A'],
+      ['manual', 'Tự sắp xếp']
+    ].forEach(([value, label]) => {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = label;
+      sortSelect.append(option);
+    });
+    sortSelect.value = group.fileSortMode || 'newest';
+    sortWrap.append(sortSelect);
+    const addButton = createElement('button', 'primary-button', '＋ Thêm tệp');
+    addButton.type = 'button';
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = true;
+    input.className = 'visually-hidden';
+    input.setAttribute('aria-label', 'Chọn tệp từ thiết bị');
+    addButton.addEventListener('click', () => input.click());
+    const status = createElement('p', 'import-status', '');
+    const list = createElement('div', 'file-list');
+    toolbar.append(countLabel, sortWrap, addButton);
+    els.library.append(back, kicker, title, description, toolbar, input, status, list);
+    window.scrollTo(0, 0);
+
+    let currentRecords = [];
+    const paintList = records => {
+      currentRecords = records;
+      list.replaceChildren();
+      if (!records.length) {
+        list.append(createElement('div', 'category-empty', 'Chưa có tệp nào trong nhóm này.\nNhấn “Thêm tệp” để chọn tài liệu hoặc tệp khác từ iPhone.'));
+        return;
+      }
+      const fragment = document.createDocumentFragment();
+      records.forEach((record, index) => {
+        const row = createElement('div', 'file-row');
+        const icon = createElement('span', 'file-row-icon', (record.name || '').split('.').pop().slice(0, 4).toUpperCase() || 'FILE');
+        const details = createElement('span', 'file-row-details');
+        details.append(
+          createElement('strong', 'file-row-name', record.name || 'Tệp không tên'),
+          createElement('small', 'file-row-meta', formatBytes(record.size || 0) + ' · ' + new Date(record.createdAt).toLocaleDateString('vi-VN'))
+        );
+        row.append(icon, details);
+        if (sortSelect.value === 'manual') {
+          const moveUp = createElement('button', 'file-row-order', '↑');
+          moveUp.type = 'button';
+          moveUp.disabled = index === 0;
+          moveUp.setAttribute('aria-label', 'Đưa tệp lên trên');
+          moveUp.addEventListener('click', () => moveFile(index, -1));
+          const moveDown = createElement('button', 'file-row-order', '↓');
+          moveDown.type = 'button';
+          moveDown.disabled = index === records.length - 1;
+          moveDown.setAttribute('aria-label', 'Đưa tệp xuống dưới');
+          moveDown.addEventListener('click', () => moveFile(index, 1));
+          row.append(moveUp, moveDown);
+        }
+        const download = createElement('button', 'file-download-button', 'Tải');
+        download.type = 'button';
+        download.addEventListener('click', async () => {
+          try {
+            const blob = await readMediaFile(record.id);
+            if (!blob) throw new Error('Không tìm thấy tệp trong bộ nhớ.');
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = record.name || 'tep';
+            link.rel = 'noopener';
+            document.body.append(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+          } catch (error) {
+            showNotice('Không tải được tệp', error.message || 'Hãy thử lại.');
+          }
+        });
+        row.append(download);
+        fragment.append(row);
+      });
+      list.append(fragment);
+    };
+
+    async function moveFile(index, delta) {
+      const target = index + delta;
+      if (target < 0 || target >= currentRecords.length) return;
+      const moved = [...currentRecords];
+      [moved[index], moved[target]] = [moved[target], moved[index]];
+      try {
+        await persistPhotoOrder(moved);
+        group.fileSortMode = 'manual';
+        sortSelect.value = 'manual';
+        await saveVault(vault);
+        paintList(moved);
+      } catch (error) {
+        showNotice('Không lưu được thứ tự', error.message || 'Hãy thử lại.');
+      }
+    }
+
+    sortSelect.addEventListener('change', async () => {
+      const mode = sortSelect.value;
+      try {
+        if (mode === 'manual') {
+          await persistPhotoOrder(currentRecords);
+          group.fileSortMode = 'manual';
+          await saveVault(vault);
+          paintList(currentRecords);
+        } else {
+          group.fileSortMode = mode;
+          await saveVault(vault);
+          paintList(sortMediaRecords(currentRecords, mode));
+        }
+      } catch (error) {
+        showNotice('Không lưu được cách sắp xếp', error.message || 'Hãy thử lại.');
+      }
+    });
+
+    input.addEventListener('change', async () => {
+      const files = Array.from(input.files || []);
+      input.value = '';
+      if (!files.length) return;
+      addButton.disabled = true;
+      let saved = 0;
+      let failed = 0;
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        status.textContent = 'Đang lưu tệp ' + (index + 1) + '/' + files.length + '…';
+        try {
+          const record = {
+            id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2),
+            vaultId,
+            groupId,
+            kind: 'file',
+            name: file.name || ('Tệp ' + (index + 1)),
+            mimeType: file.type || 'application/octet-stream',
+            size: file.size,
+            lastModified: file.lastModified || 0,
+            createdAt: Date.now()
+          };
+          await saveFileRecord(record, file);
+          saved += 1;
+        } catch (error) {
+          failed += 1;
+          console.error('Không thể lưu tệp:', file.name, error);
+          if (error && error.name === 'QuotaExceededError') {
+            showNotice('Không đủ dung lượng', 'iPhone không còn đủ bộ nhớ dành cho dữ liệu website. Một số tệp có thể chưa được lưu.');
+            break;
+          }
+        }
+      }
+      addButton.disabled = false;
+      status.textContent = saved + ' tệp đã lưu' + (failed ? ' · ' + failed + ' tệp chưa lưu được' : '');
+      if (saved > 0) {
+        group.fileCount = Number(group.fileCount || 0) + saved;
+        vault.updatedAt = Date.now();
+        await saveVault(vault);
+      }
+      await updateStats();
+      const raw = await readMediaForGroup(groupId);
+      currentRecords = sortMediaRecords(raw.filter(item => item.kind === 'file'), group.fileSortMode || 'newest');
+      countLabel.textContent = currentRecords.length + ' tệp';
+      paintList(currentRecords);
+      if (failed && saved === 0) showNotice('Chưa lưu được tệp', 'Hãy thử chọn ít tệp hơn hoặc kiểm tra dung lượng Safari.');
+    });
+
+    try {
+      const raw = await readMediaForGroup(groupId);
+      if (token !== photoPageToken) return;
+      currentRecords = sortMediaRecords(raw.filter(item => item.kind === 'file'), group.fileSortMode || 'newest');
+      countLabel.textContent = currentRecords.length + ' tệp';
+      paintList(currentRecords);
+    } catch (error) {
+      countLabel.textContent = 'Không tải được tệp';
+      showNotice('Lỗi đọc thư viện', error.message || 'Không thể đọc dữ liệu tệp đã lưu.');
     }
   }
 
