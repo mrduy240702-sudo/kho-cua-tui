@@ -567,19 +567,24 @@
     const counter = document.getElementById('viewerCounter');
     const download = document.getElementById('viewerDownload');
     const token = ++viewerLoadToken;
+    const canAnimatePhoto = typeof image.animate === 'function' &&
+      !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (typeof image.getAnimations === 'function') {
+      image.getAnimations().forEach(animation => animation.cancel());
+    }
 
     title.textContent = record.name || 'Ảnh';
     counter.textContent = (index + 1) + ' / ' + viewerRecords.length;
     document.getElementById('viewerPrev').disabled = index === 0;
     document.getElementById('viewerNext').disabled = index === viewerRecords.length - 1;
 
-    if (isChangingPhoto && typeof image.animate === 'function') {
+    if (isChangingPhoto && canAnimatePhoto) {
       const exitAnimation = image.animate([
         { opacity: 1, transform: 'translate3d(0,0,0) scale(1)', filter: 'blur(0px)' },
         { opacity: 0, transform: 'translate3d(' + (direction > 0 ? '-20px' : '20px') + ',0,0) scale(.99)', filter: 'blur(2px)' }
       ], {
-        duration: 115,
-        easing: 'ease-in',
+        duration: 155,
+        easing: 'cubic-bezier(.4,0,1,1)',
         fill: 'forwards'
       });
       try { await exitAnimation.finished; } catch (_) {}
@@ -608,14 +613,13 @@
         image.style.opacity = '';
         if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
 
-        if (isChangingPhoto && typeof image.animate === 'function') {
+        if (isChangingPhoto && canAnimatePhoto) {
           image.animate([
             { opacity: 0, transform: 'translate3d(' + (direction > 0 ? '20px' : '-20px') + ',0,0) scale(.99)', filter: 'blur(2px)' },
             { opacity: 1, transform: 'translate3d(0,0,0) scale(1)', filter: 'blur(0px)' }
           ], {
-            duration: 190,
-            easing: 'cubic-bezier(.2,.72,.24,1)',
-            fill: 'both'
+            duration: 235,
+            easing: 'cubic-bezier(.18,.72,.2,1)'
           });
         }
       };
@@ -625,6 +629,8 @@
         image.classList.remove('is-loading');
         image.style.opacity = '';
         if (previousUrl && previousUrl !== nextUrl) URL.revokeObjectURL(previousUrl);
+        URL.revokeObjectURL(nextUrl);
+        if (viewerObjectUrl === nextUrl) viewerObjectUrl = null;
         showNotice('Không mở được ảnh', 'Tệp gốc đã được lưu, nhưng trình duyệt trên thiết bị này chưa hỗ trợ hiển thị định dạng ảnh đó.');
       };
 
