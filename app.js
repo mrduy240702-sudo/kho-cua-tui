@@ -229,7 +229,11 @@
         card.style.setProperty('--symbol-bg', PALETTE[index % PALETTE.length][1]);
         const symbol = createElement('span', 'vault-symbol', group.emoji);
         const name = createElement('span', 'vault-name', group.name);
-        const meta = createElement('span', 'vault-meta', group.typeLabel + ' · Chưa có tệp');
+        const groupCount = Number(group.photoCount || 0);
+        const metaText = group.type === 'photos'
+          ? group.typeLabel + ' · ' + groupCount + ' ảnh'
+          : group.typeLabel + ' · Chưa có tệp';
+        const meta = createElement('span', 'vault-meta', metaText);
         const arrow = createElement('span', 'vault-arrow', '↗');
         card.append(symbol, name, meta, arrow);
         card.addEventListener('click', () => {
@@ -469,8 +473,19 @@
       }
       importButton.disabled = false;
       status.textContent = saved + ' ảnh đã lưu' + (failed ? ' · ' + failed + ' ảnh chưa lưu được' : '');
+      if (saved > 0) {
+        const owner = vaults.find(item => item.id === vaultId);
+        const ownerGroup = owner && (owner.groups || []).find(item => item.id === groupId);
+        if (ownerGroup) {
+          ownerGroup.photoCount = Number(ownerGroup.photoCount || 0) + saved;
+          owner.updatedAt = Date.now();
+          try { await saveVault(owner); } catch (error) { console.warn('Không cập nhật được số ảnh trong nhóm:', error); }
+        }
+      }
       await updateStats();
       await renderPhotoGroup(vaultId, groupId);
+      const refreshedStatus = els.library.querySelector('.import-status');
+      if (refreshedStatus) refreshedStatus.textContent = saved + ' ảnh đã lưu' + (failed ? ' · ' + failed + ' ảnh chưa lưu được' : '');
       if (failed && saved === 0) {
         showNotice('Chưa lưu được ảnh', 'Hãy thử chọn ít ảnh hơn hoặc kiểm tra dung lượng lưu trữ của Safari.');
       }
